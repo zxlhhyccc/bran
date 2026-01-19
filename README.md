@@ -6,12 +6,14 @@
 [![License](https://img.shields.io/github/license/cmliu/edgetunnel?style=flat-square)](https://github.com/cmliu/edgetunnel/blob/main/LICENSE)
 [![Telegram](https://img.shields.io/badge/Telegram-Group-blue?style=flat-square&logo=telegram)](https://t.me/CMLiussss)
 [![YouTube](https://img.shields.io/badge/YouTube-Channel-red?style=flat-square&logo=youtube)](https://www.youtube.com/watch?v=LeT4jQUh8ok)
-[![DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/cmliu/edgetunnel)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/cmliu/edgetunnel)
 ---
 
 ## 📖 项目简介
 
 **edgetunnel** 是一个基于 CF Workers/Pages 平台的边缘计算隧道解密方案。它能够高效地处理网络流量，并提供强大的管理面板和灵活的节点配置能力。
+
+- 🖥️ **Demo 演示站点**：[https://EDT-Pages.github.io/admin](https://EDT-Pages.github.io/admin)
 
 ### ✨ 核心特性
 
@@ -27,7 +29,6 @@
 ## 💡 快速部署
 >[!TIP]
 > 📖 **详尽图文教程**：[edgetunnel 部署指南](https://cmliussss.com/p/edt2/)
-> 🖥️ **Demo 演示站点**：[https://EDT-Pages.github.io/admin](https://EDT-Pages.github.io/admin)
 
 >[!WARNING]
 > ⚠️ **Error 1101问题**：[视频解析](https://www.youtube.com/watch?v=r4uVTEJptdE)
