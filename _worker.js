@@ -998,7 +998,8 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null,
     return processedLines.join('\n');
 }
 
-function Singbox订阅配置文件热补丁(sb_json_text, uuid = null, fingerprint = "chrome", ech_config = null) {
+function Singbox订阅配置文件热补丁(SingBox_原始订阅内容, uuid = null, fingerprint = "chrome", ech_config = null) {
+    const sb_json_text = SingBox_原始订阅内容.replace('1.1.1.1', '8.8.8.8').replace('1.0.0.1', '8.8.4.4');
     try {
         let config = JSON.parse(sb_json_text);
 
@@ -1165,6 +1166,7 @@ function Singbox订阅配置文件热补丁(sb_json_text, uuid = null, fingerpri
                     if (ech_config) {
                         outbound.tls.ech = {
                             enabled: true,
+                            //query_server_name: "cloudflare-ech.com",// 等待 1.13.0+ 版本上线
                             config: `-----BEGIN ECH CONFIGS-----\n${ech_config}\n-----END ECH CONFIGS-----`
                         };
                     }
