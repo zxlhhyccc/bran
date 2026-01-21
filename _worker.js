@@ -325,7 +325,7 @@ export default {
                             订阅内容 = Singbox订阅配置文件热补丁(订阅内容, config_JSON.UUID, config_JSON.Fingerprint, config_JSON.ECH ? await getECH(host) : null);
                             responseHeaders["content-type"] = 'application/json; charset=utf-8';
                         } else if (订阅类型 === 'clash') {
-                            订阅内容 = Clash订阅配置文件热补丁(订阅内容, config_JSON.UUID, config_JSON.ECH);
+                            订阅内容 = Clash订阅配置文件热补丁(订阅内容, config_JSON.UUID, config_JSON.ECH, config_JSON.HOSTS);
                             responseHeaders["content-type"] = 'application/x-yaml; charset=utf-8';
                         }
                         return new Response(订阅内容, { status: 200, headers: responseHeaders });
@@ -786,10 +786,14 @@ async function httpConnect(targetHost, targetPort, initialData) {
     }
 }
 //////////////////////////////////////////////////功能性函数///////////////////////////////////////////////
-function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null, ECH启用 = false) {
-    if (!ECH启用) return Clash_原始订阅内容;
+function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null, ECH启用 = false, HOSTS = []) {
+    if (!ECH启用 || HOSTS.length === 0) return Clash_原始订阅内容;
 
-    const clash_yaml = `dns:
+    // 生成 HOSTS 的 nameserver-policy 条目
+    const hostsEntries = HOSTS.map(host => `    "${host}":\n      - tls://8.8.8.8\n      - https://doh.cmliussss.com/CMLiussss\n      - ${ECH_DOH}`).join('\n');
+
+    // 完整的 DNS 配置块（用于没有 dns: 字段时添加）
+    const fullDnsBlock = `dns:
   enable: true
   default-nameserver:
     - 223.5.5.5
@@ -810,10 +814,61 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null,
       - 240.0.0.0/4
       - 0.0.0.0/32
     geoip-code: CN
-  proxy-server-nameserver:
-    - https://doh.cmliussss.com/CMLiussss
-    - ${ECH_DOH}
-` + Clash_原始订阅内容;
+  nameserver-policy:
+${hostsEntries}
+`;
+
+    let clash_yaml = Clash_原始订阅内容;
+
+    // 检查是否存在 dns: 字段（可能在任意行，行首无缩进）
+    const hasDns = /^dns:\s*(?:\n|$)/m.test(clash_yaml);
+
+    if (hasDns) {
+        // 存在 dns: 字段，检查是否存在 nameserver-policy:
+        const hasNameserverPolicy = /^\s{2}nameserver-policy:\s*(?:\n|$)/m.test(clash_yaml);
+
+        if (hasNameserverPolicy) {
+            // 存在 nameserver-policy:，在其后添加 HOSTS 条目
+            clash_yaml = clash_yaml.replace(
+                /^(\s{2}nameserver-policy:\s*\n)/m,
+                `$1${hostsEntries}\n`
+            );
+        } else {
+            // 不存在 nameserver-policy:，需要在 dns: 块内添加整个 nameserver-policy
+            // 找到 dns: 块的结束位置（下一个顶级字段之前）
+            const lines = clash_yaml.split('\n');
+            let dnsBlockEndIndex = -1;
+            let inDnsBlock = false;
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if (/^dns:\s*$/.test(line)) {
+                    inDnsBlock = true;
+                    continue;
+                }
+                if (inDnsBlock) {
+                    // 检查是否是新的顶级字段（行首无空格且不是空行且不是注释）
+                    if (/^[a-zA-Z]/.test(line)) {
+                        dnsBlockEndIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            // 在 dns 块末尾插入 nameserver-policy
+            const nameserverPolicyBlock = `  nameserver-policy:\n${hostsEntries}`;
+            if (dnsBlockEndIndex !== -1) {
+                lines.splice(dnsBlockEndIndex, 0, nameserverPolicyBlock);
+            } else {
+                // dns: 是最后一个顶级块，在文件末尾添加
+                lines.push(nameserverPolicyBlock);
+            }
+            clash_yaml = lines.join('\n');
+        }
+    } else {
+        // 不存在 dns: 字段，在文件开头添加完整的 DNS 配置块
+        clash_yaml = fullDnsBlock + clash_yaml;
+    }
 
     if (!uuid) return clash_yaml;
     const lines = clash_yaml.split('\n');
