@@ -787,13 +787,10 @@ async function httpConnect(targetHost, targetPort, initialData) {
 }
 //////////////////////////////////////////////////功能性函数///////////////////////////////////////////////
 function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null, ECH启用 = false, HOSTS = []) {
-    if (!ECH启用 || HOSTS.length === 0) return Clash_原始订阅内容;
+    let clash_yaml = Clash_原始订阅内容;
 
-    // 生成 HOSTS 的 nameserver-policy 条目
-    const hostsEntries = HOSTS.map(host => `    "${host}":\n      - tls://8.8.8.8\n      - https://doh.cmliussss.com/CMLiussss\n      - ${ECH_DOH}`).join('\n');
-
-    // 完整的 DNS 配置块（用于没有 dns: 字段时添加）
-    const fullDnsBlock = `dns:
+    // 基础 DNS 配置块（不含 nameserver-policy）
+    const baseDnsBlock = `dns:
   enable: true
   default-nameserver:
     - 223.5.5.5
@@ -814,17 +811,22 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null,
       - 240.0.0.0/4
       - 0.0.0.0/32
     geoip-code: CN
-  nameserver-policy:
-${hostsEntries}
 `;
-
-    let clash_yaml = Clash_原始订阅内容;
 
     // 检查是否存在 dns: 字段（可能在任意行，行首无缩进）
     const hasDns = /^dns:\s*(?:\n|$)/m.test(clash_yaml);
 
-    if (hasDns) {
-        // 存在 dns: 字段，检查是否存在 nameserver-policy:
+    // 无论 ECH 是否启用，都确保存在 dns: 配置块
+    if (!hasDns) {
+        clash_yaml = baseDnsBlock + clash_yaml;
+    }
+
+    // 如果 ECH 启用且 HOSTS 有效，添加 nameserver-policy
+    if (ECH启用 && HOSTS.length > 0) {
+        // 生成 HOSTS 的 nameserver-policy 条目
+        const hostsEntries = HOSTS.map(host => `    "${host}":\n      - tls://8.8.8.8\n      - https://doh.cmliussss.com/CMLiussss\n      - ${ECH_DOH}`).join('\n');
+
+        // 检查是否存在 nameserver-policy:
         const hasNameserverPolicy = /^\s{2}nameserver-policy:\s*(?:\n|$)/m.test(clash_yaml);
 
         if (hasNameserverPolicy) {
@@ -835,7 +837,6 @@ ${hostsEntries}
             );
         } else {
             // 不存在 nameserver-policy:，需要在 dns: 块内添加整个 nameserver-policy
-            // 找到 dns: 块的结束位置（下一个顶级字段之前）
             const lines = clash_yaml.split('\n');
             let dnsBlockEndIndex = -1;
             let inDnsBlock = false;
@@ -865,12 +866,12 @@ ${hostsEntries}
             }
             clash_yaml = lines.join('\n');
         }
-    } else {
-        // 不存在 dns: 字段，在文件开头添加完整的 DNS 配置块
-        clash_yaml = fullDnsBlock + clash_yaml;
     }
 
-    if (!uuid) return clash_yaml;
+    // 如果没有 uuid 或 ECH 未启用，直接返回
+    if (!uuid || !ECH启用) return clash_yaml;
+
+    // ECH 启用时，处理代理节点添加 ech-opts
     const lines = clash_yaml.split('\n');
     const processedLines = [];
     let i = 0;
