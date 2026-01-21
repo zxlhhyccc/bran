@@ -790,7 +790,7 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null,
     if (!ECH启用 || HOSTS.length === 0) return Clash_原始订阅内容;
 
     // 生成 HOSTS 的 nameserver-policy 条目
-    const hostsEntries = HOSTS.map(host => `    "${host}":\n      - https://doh.cmliussss.com/CMLiussss\n      - ${ECH_DOH}`).join('\n');
+    const hostsEntries = HOSTS.map(host => `    "${host}":\n      - tls://8.8.8.8\n      - https://doh.cmliussss.com/CMLiussss\n      - ${ECH_DOH}`).join('\n');
 
     // 完整的 DNS 配置块（用于没有 dns: 字段时添加）
     const fullDnsBlock = `dns:
