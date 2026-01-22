@@ -820,6 +820,9 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null,
         clash_yaml = baseDnsBlock + clash_yaml;
     }
 
+    // 如果 ECH_SNI 存在，添加到 HOSTS 数组中
+    if (ECH_SNI && !HOSTS.includes(ECH_SNI)) HOSTS.push(ECH_SNI);
+
     // 如果 ECH 启用且 HOSTS 有效，添加 nameserver-policy
     if (ECH启用 && HOSTS.length > 0) {
         // 生成 HOSTS 的 nameserver-policy 条目
@@ -2083,4 +2086,3 @@ async function html1101(host, 访问IP) {
 </body>
 </html>`;
 }
-
