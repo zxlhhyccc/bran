@@ -823,7 +823,7 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null,
     // 如果 ECH 启用且 HOSTS 有效，添加 nameserver-policy
     if (ECH启用 && HOSTS.length > 0) {
         // 生成 HOSTS 的 nameserver-policy 条目
-        const hostsEntries = HOSTS.map(host => `    "${host}":\n      - tls://223.5.5.5\n      - tls://8.8.8.8\n      - https://doh.cmliussss.com/CMLiussss${ECH_DNS ? `\n      - ${ECH_DNS}` : ''}`).join('\n');
+        const hostsEntries = HOSTS.map(host => `    "${host}":\n      - tls://223.5.5.5\n      - tls://8.8.8.8${ECH_DNS ? `\n      - ${ECH_DNS}` : ''}`).join('\n');
 
         // 检查是否存在 nameserver-policy:
         const hasNameserverPolicy = /^\s{2}nameserver-policy:\s*(?:\n|$)/m.test(clash_yaml);
