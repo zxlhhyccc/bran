@@ -908,7 +908,7 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null,
 
             if (credentialMatch && credentialMatch[1].trim() === uuid.trim()) {
                 // 在最后一个}前添加ech-opts
-                fullNode = fullNode.replace(/\}(\s*)$/, `, ech-opts: {enable: true}}$1`);
+                fullNode = fullNode.replace(/\}(\s*)$/, `, ech-opts: {enable: true, query-server-name: cloudflare-ech.com}}$1`);
             }
 
             processedLines.push(fullNode);
@@ -983,7 +983,8 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null,
                     // 在节点末尾（最后一个属性块之后）插入 ech-opts 属性
                     nodeLines.splice(insertIndex + 1, 0,
                         `${indent}ech-opts:`,
-                        `${indent}  enable: true`
+                        `${indent}  enable: true`,
+                        `${indent}  query-server-name: cloudflare-ech.com`
                     );
                 }
             }
