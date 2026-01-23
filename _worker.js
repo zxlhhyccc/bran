@@ -799,9 +799,8 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null,
   nameserver:
     - https://sm2.doh.pub/dns-query
     - https://dns.alidns.com/dns-query
-  fallback:
+  fallback:${ECH_DNS ? `\n    - ${ECH_DNS}` : ''}
     - 8.8.4.4
-    - 101.101.101.101
     - 208.67.220.220
   fallback-filter:
     geoip: true
@@ -826,7 +825,7 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null,
     // 如果 ECH 启用且 HOSTS 有效，添加 nameserver-policy
     if (ECH启用 && HOSTS.length > 0) {
         // 生成 HOSTS 的 nameserver-policy 条目
-        const hostsEntries = HOSTS.map(host => `    "${host}":\n      - https://doh.cm.edu.kg/CMLiussss${ECH_DNS ? `\n      - ${ECH_DNS}` : ''}\n      - tls://223.5.5.5\n      - tls://8.8.8.8`).join('\n');
+        const hostsEntries = HOSTS.map(host => `    "${host}":${ECH_DNS ? `\n      - ${ECH_DNS}` : ''}\n      - https://doh.cm.edu.kg/CMLiussss`).join('\n');
 
         // 检查是否存在 nameserver-policy:
         const hasNameserverPolicy = /^\s{2}nameserver-policy:\s*(?:\n|$)/m.test(clash_yaml);
