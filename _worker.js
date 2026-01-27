@@ -1442,22 +1442,12 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
     if (env.PATH) config_JSON.PATH = env.PATH.startsWith('/') ? env.PATH : '/' + env.PATH;
     else if (!config_JSON.PATH) config_JSON.PATH = '/';
 
-    const PATH反代参数 = config_JSON.反代.SOCKS5.启用 ? ('/' + config_JSON.反代.SOCKS5.启用 + (config_JSON.反代.SOCKS5.全局 ? '://' : '=') + config_JSON.反代.SOCKS5.账号) : (config_JSON.反代.PROXYIP === 'auto' ? '/' : `/proxyip=${config_JSON.反代.PROXYIP}`);
-    let PATH固定参数 = config_JSON.PATH;
-    if (PATH固定参数 === '/') PATH固定参数 = '';
-    else while (PATH固定参数.endsWith('/')) PATH固定参数 = PATH固定参数.slice(0, -1);
-
-    // 分离 PATH固定参数 的路径部分和查询参数部分
-    let 路径部分 = PATH固定参数, 查询参数部分 = '';
-    const 问号位置 = PATH固定参数.indexOf('?');
-    if (问号位置 !== -1) {
-        路径部分 = PATH固定参数.slice(0, 问号位置);
-        查询参数部分 = PATH固定参数.slice(问号位置); // 包含 '?'
-    }
-
-    // 组合路径：路径部分 + 反代参数 + 查询参数 + ed参数
-    const 基础路径 = 路径部分 + PATH反代参数 + 查询参数部分;
-    config_JSON.完整节点路径 = config_JSON.启用0RTT ? 基础路径 + (查询参数部分 ? '&ed=2560' : '?ed=2560') : 基础路径;
+    const { SOCKS5, PROXYIP } = config_JSON.反代;
+    const PATH反代参数 = SOCKS5.启用 ? `${SOCKS5.启用}${SOCKS5.全局 ? '://' : '='}${SOCKS5.账号}` : (PROXYIP === 'auto' ? '' : `proxyip=${PROXYIP}`);
+    const normalizedPath = config_JSON.PATH === '/' ? '' : config_JSON.PATH.replace(/\/+(?=\?|$)/, '').replace(/\/+$/, '');
+    const [路径部分, ...查询数组] = normalizedPath.split('?');
+    const 查询部分 = 查询数组.length ? '?' + 查询数组.join('?') : '';
+    config_JSON.完整节点路径 = (路径部分 || '/') + (路径部分 && PATH反代参数 ? '/' : '') + PATH反代参数 + 查询部分 + (config_JSON.启用0RTT ? (查询部分 ? '&' : '?') + 'ed=2560' : '');
 
     if (!config_JSON.TLS分片 && config_JSON.TLS分片 !== null) config_JSON.TLS分片 = null;
     const TLS分片参数 = config_JSON.TLS分片 == 'Shadowrocket' ? `&fragment=${encodeURIComponent('1,40-60,30-50,tlshello')}` : config_JSON.TLS分片 == 'Happ' ? `&fragment=${encodeURIComponent('3,1,tlshello')}` : '';
