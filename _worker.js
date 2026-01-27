@@ -803,11 +803,15 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null,
     - 208.67.220.220
   fallback-filter:
     geoip: true
-    domain: [+.google.com, +.facebook.com, +.youtube.com]
+    geoip-code: CN
     ipcidr:
       - 240.0.0.0/4
+      - 127.0.0.1/32
       - 0.0.0.0/32
-    geoip-code: CN
+    domain:
+      - '+.google.com'
+      - '+.facebook.com'
+      - '+.youtube.com'
 `;
 
     // 检查是否存在 dns: 字段（可能在任意行，行首无缩进）
