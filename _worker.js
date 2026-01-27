@@ -1688,7 +1688,7 @@ async function 反代参数获取(request) {
     启用SOCKS5全局反代 = searchParams.has('globalproxy') || false;
 
     // 统一处理反代IP参数 (优先级最高,使用正则一次匹配)
-    const proxyMatch = pathLower.match(/\/(proxyip[.=]|pyip=|ip=)(.+)/);
+    const proxyMatch = pathLower.match(/\/(proxyip[.=]|pyip=|ip=)([^/?]+)/);
     if (searchParams.has('proxyip')) {
         const 路参IP = searchParams.get('proxyip');
         反代IP = 路参IP.includes(',') ? 路参IP.split(',')[Math.floor(Math.random() * 路参IP.split(',').length)] : 路参IP;
@@ -1703,10 +1703,10 @@ async function 反代参数获取(request) {
 
     // 处理SOCKS5/HTTP代理参数
     let socksMatch;
-    if ((socksMatch = pathname.match(/\/(socks5?|http):\/?\/?(.+)/i))) {
+    if ((socksMatch = pathname.match(/\/(socks5?|http):\/?\/?([^/?#]+)/i))) {
         // 格式: /socks5://... 或 /http://...
         启用SOCKS5反代 = socksMatch[1].toLowerCase() === 'http' ? 'http' : 'socks5';
-        我的SOCKS5账号 = socksMatch[2].split('#')[0];
+        我的SOCKS5账号 = socksMatch[2];
         启用SOCKS5全局反代 = true;
 
         // 处理Base64编码的用户名密码
@@ -1718,7 +1718,7 @@ async function 反代参数获取(request) {
             }
             我的SOCKS5账号 = `${userPassword}@${我的SOCKS5账号.substring(atIndex + 1)}`;
         }
-    } else if ((socksMatch = pathname.match(/\/(g?s5|socks5|g?http)=(.+)/i))) {
+    } else if ((socksMatch = pathname.match(/\/(g?s5|socks5|g?http)=([^/?#]+)/i))) {
         // 格式: /socks5=... 或 /s5=... 或 /gs5=... 或 /http=... 或 /ghttp=...
         const type = socksMatch[1].toLowerCase();
         我的SOCKS5账号 = socksMatch[2];
