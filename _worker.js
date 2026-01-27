@@ -1508,9 +1508,16 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
 }
 
 async function 生成随机IP(request, count = 16, 指定端口 = -1) {
-    const asnMap = { '9808': 'cmcc', '4837': 'cu', '17623': 'cu', '4134': 'ct' }, asn = request.cf.asn;
-    const cidr_url = asnMap[asn] ? `https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR/${asnMap[asn]}.txt` : 'https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR.txt';
-    const cfname = { '9808': 'CF移动优选', '4837': 'CF联通优选', '17623': 'CF联通优选', '4134': 'CF电信优选' }[asn] || 'CF官方优选';
+    const ISP配置 = {
+        '9808':  { file: 'cmcc', name: 'CF移动优选' },
+        '4837':  { file: 'cu',   name: 'CF联通优选' },
+        '17623': { file: 'cu',   name: 'CF联通优选' },
+        '17816': { file: 'cu',   name: 'CF联通优选' },
+        '4134':  { file: 'ct',   name: 'CF电信优选' },
+    };
+    const asn = request.cf.asn, isp = ISP配置[asn];
+    const cidr_url = isp ? `https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR/${isp.file}.txt` : 'https://raw.githubusercontent.com/cmliu/cmliu/main/CF-CIDR.txt';
+    const cfname = isp?.name || 'CF官方优选';
     const cfport = [443, 2053, 2083, 2087, 2096, 8443];
     let cidrList = [];
     try { const res = await fetch(cidr_url); cidrList = res.ok ? await 整理成数组(await res.text()) : ['104.16.0.0/13']; } catch { cidrList = ['104.16.0.0/13']; }
