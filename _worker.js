@@ -1446,13 +1446,15 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
     if (env.PATH) config_JSON.PATH = env.PATH.startsWith('/') ? env.PATH : '/' + env.PATH;
     else if (!config_JSON.PATH) config_JSON.PATH = '/';
 
-    const { SOCKS5, PROXYIP } = config_JSON.反代;
-    const PATH反代参数 = SOCKS5.启用 ? `${SOCKS5.启用}${SOCKS5.全局 ? '://' : '='}${SOCKS5.账号}` : (PROXYIP === 'auto' ? '' : `proxyip=${PROXYIP}`);
-    config_JSON.PATH = config_JSON.PATH.replace(PATH反代参数, '').replace('//', '/');
+    const { SOCKS5: 袜子五, PROXYIP: 反代挨批 } = config_JSON.反代;
+    const 路径反代参数 = 袜子五.启用
+        ? `${袜子五.启用}${袜子五.全局 ? '://' : '='}${袜子五.账号}`
+        : 反代挨批 !== 'auto' ? `proxyip=${反代挨批}` : '';
+    config_JSON.PATH = config_JSON.PATH.replace(路径反代参数, '').replace('//', '/');
     const normalizedPath = config_JSON.PATH === '/' ? '' : config_JSON.PATH.replace(/\/+(?=\?|$)/, '').replace(/\/+$/, '');
     const [路径部分, ...查询数组] = normalizedPath.split('?');
     const 查询部分 = 查询数组.length ? '?' + 查询数组.join('?') : '';
-    config_JSON.完整节点路径 = (路径部分 || '/') + (路径部分 && PATH反代参数 ? '/' : '') + PATH反代参数 + 查询部分 + (config_JSON.启用0RTT ? (查询部分 ? '&' : '?') + 'ed=2560' : '');
+    config_JSON.完整节点路径 = (路径部分 || '/') + (路径部分 && 路径反代参数 ? '/' : '') + 路径反代参数 + 查询部分 + (config_JSON.启用0RTT ? (查询部分 ? '&' : '?') + 'ed=2560' : '');
 
     if (!config_JSON.TLS分片 && config_JSON.TLS分片 !== null) config_JSON.TLS分片 = null;
     const TLS分片参数 = config_JSON.TLS分片 == 'Shadowrocket' ? `&fragment=${encodeURIComponent('1,40-60,30-50,tlshello')}` : config_JSON.TLS分片 == 'Happ' ? `&fragment=${encodeURIComponent('3,1,tlshello')}` : '';
