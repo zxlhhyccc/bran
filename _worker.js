@@ -1738,67 +1738,68 @@ async function 反代参数获取(request) {
         return true;
     };
 
-    // 1. 处理 query 参数中的 proxyip (优先级最高)
+    // 辅助函数：从路径值中提取干净的地址（移除后续路径段）
+    const 提取路径值 = (rawValue) => {
+        if (rawValue.includes('://')) {
+            // 协议URL：保留 protocol://user:pass@host:port，移除后续路径
+            const protocolPart = rawValue.split('://');
+            if (protocolPart.length === 2) {
+                const [protocol, afterProtocol] = protocolPart;
+                const firstSlashIndex = afterProtocol.indexOf('/');
+                if (firstSlashIndex > 0) {
+                    return protocol + '://' + afterProtocol.substring(0, firstSlashIndex);
+                }
+            }
+        } else {
+            // 普通IP:PORT：只保留到第一个 /
+            const firstSlashIndex = rawValue.indexOf('/');
+            if (firstSlashIndex > 0) {
+                return rawValue.substring(0, firstSlashIndex);
+            }
+        }
+        return rawValue;
+    };
+
+    // ==================== 第一步：处理 query 参数 ====================
+    // 优先级最高：?proxyip=, ?socks5=, ?http=
+    let socksMatch, proxyMatch;
     if (searchParams.has('proxyip')) {
         const 路参IP = searchParams.get('proxyip');
-        // 支持 ?proxyip=socks5://... 或 ?proxyip=http://...
-        if (!解析代理URL(路参IP)) {
+        // proxyip 值以 socks5:// 或 http:// 开头，视为对应协议处理
+        if (解析代理URL(路参IP)) { /* 继续到下方统一解析 */ }
+        else {
+            // 否则作为 IP 反代
             反代IP = 路参IP.includes(',') ? 路参IP.split(',')[Math.floor(Math.random() * 路参IP.split(',').length)] : 路参IP;
             启用反代兜底 = false;
             return;
         }
     }
-    // 2. 处理路径中的 proxyip/pyip/ip 参数
-    else {
-        // 改进的正则：支持 /proxyip=protocol://user:pass@host:port 格式
-        // 匹配 /proxyip=... 之后的内容，直到遇到 ?# 或空白
-        const proxyMatch = pathLower.match(/\/(proxyip[.=]|pyip=|ip=)([^?#\s]+)/);
-        if (proxyMatch) {
-            let 路参IP = proxyMatch[2];
-            
-            // 处理末尾的路径片段
-            // 对于协议URL(含://)和普通IP进行不同处理
-            if (路参IP.includes('://')) {
-                // 对于 protocol://... 格式，只保留到 host:port，移除所有路径段
-                const protocolPart = 路参IP.split('://');
-                if (protocolPart.length === 2) {
-                    const [protocol, afterProtocol] = protocolPart;
-                    const firstSlashIndex = afterProtocol.indexOf('/');
-                    if (firstSlashIndex > 0) {
-                        // 在第一个 / 处截断，保留 user:pass@host:port
-                        路参IP = protocol + '://' + afterProtocol.substring(0, firstSlashIndex);
-                    }
-                }
-            } else {
-                // 对于普通IP:PORT格式，只保留到第一个 /（移除所有路径部分）
-                const firstSlashIndex = 路参IP.indexOf('/');
-                if (firstSlashIndex > 0) {
-                    路参IP = 路参IP.substring(0, firstSlashIndex);
-                }
-            }
-            
-            // 支持 /proxyip=socks5://... 或 /proxyip=http://...
-            if (!解析代理URL(路参IP)) {
-                反代IP = 路参IP.includes(',') ? 路参IP.split(',')[Math.floor(Math.random() * 路参IP.split(',').length)] : 路参IP;
-                启用反代兜底 = false;
-                return;
-            }
-        }
-        // 3. 处理独立的 SOCKS5/HTTP 代理参数
-        else {
-            let socksMatch;
-            if ((socksMatch = pathname.match(/\/(socks5?|http):\/?\/?([^/?#]+)/i))) {
-                // 格式: /socks5://... 或 /http://...
-                启用SOCKS5反代 = socksMatch[1].toLowerCase() === 'http' ? 'http' : 'socks5';
-                我的SOCKS5账号 = socksMatch[2];
-                启用SOCKS5全局反代 = true;
-            } else if ((socksMatch = pathname.match(/\/(g?s5|socks5|g?http)=([^/?#]+)/i))) {
-                // 格式: /socks5=... 或 /s5=... 或 /gs5=... 或 /http=... 或 /ghttp=...
-                const type = socksMatch[1].toLowerCase();
-                我的SOCKS5账号 = socksMatch[2];
-                启用SOCKS5反代 = type.includes('http') ? 'http' : 'socks5';
-                启用SOCKS5全局反代 = type.startsWith('g') || 启用SOCKS5全局反代;
-            }
+    // query 中的 ?socks5= 和 ?http= 已在初始化时由 searchParams.get 处理
+
+    // ==================== 第二步：处理路径中的 SOCKS5/HTTP 协议关键词 ====================
+    // 匹配：/socks5://..., /socks://.., /http://...
+    else if ((socksMatch = pathname.match(/\/(socks5?|http):\/?\/?([^/?#\s]+)/i))) {
+        启用SOCKS5反代 = socksMatch[1].toLowerCase() === 'http' ? 'http' : 'socks5';
+        我的SOCKS5账号 = socksMatch[2];
+        启用SOCKS5全局反代 = true;
+    }
+    // 匹配：/socks5=..., /s5=..., /gs5=..., /http=..., /ghttp=...
+    else if ((socksMatch = pathname.match(/\/(g?s5|socks5|g?http)=([^/?#\s]+)/i))) {
+        const type = socksMatch[1].toLowerCase();
+        我的SOCKS5账号 = socksMatch[2];
+        启用SOCKS5反代 = type.includes('http') ? 'http' : 'socks5';
+        启用SOCKS5全局反代 = type.startsWith('g') || 启用SOCKS5全局反代;
+    }
+
+    // ==================== 第三步：处理路径中的 proxyip/pyip/ip ====================
+    else if ((proxyMatch = pathLower.match(/\/(proxyip[.=]|pyip=|ip=)([^?#\s]+)/))) {
+        let 路参IP = 提取路径值(proxyMatch[2]);
+        // proxyip 值以 socks5:// 或 http:// 开头，视为对应协议处理
+        if (!解析代理URL(路参IP)) {
+            // 否则作为 IP 反代
+            反代IP = 路参IP.includes(',') ? 路参IP.split(',')[Math.floor(Math.random() * 路参IP.split(',').length)] : 路参IP;
+            启用反代兜底 = false;
+            return;
         }
     }
 
