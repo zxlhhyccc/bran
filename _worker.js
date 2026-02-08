@@ -1733,7 +1733,7 @@ async function 反代参数获取(request) {
         const protocolMatch = proxyUrl.match(/^(socks5|http):\/\/(.+)$/i);
         if (!protocolMatch) return false;
         启用SOCKS5反代 = protocolMatch[1].toLowerCase();
-        我的SOCKS5账号 = protocolMatch[2];
+        我的SOCKS5账号 = protocolMatch[2].split('/')[0];
         启用SOCKS5全局反代 = 默认全局 || 启用SOCKS5全局反代;
         return true;
     };
@@ -1780,13 +1780,13 @@ async function 反代参数获取(request) {
     // 匹配：/socks5://..., /socks://.., /http://...
     else if ((socksMatch = pathname.match(/\/(socks5?|http):\/?\/?([^/?#\s]+)/i))) {
         启用SOCKS5反代 = socksMatch[1].toLowerCase() === 'http' ? 'http' : 'socks5';
-        我的SOCKS5账号 = socksMatch[2];
+        我的SOCKS5账号 = socksMatch[2].split('/')[0];
         启用SOCKS5全局反代 = true;
     }
     // 匹配：/socks5=..., /s5=..., /gs5=..., /http=..., /ghttp=...
     else if ((socksMatch = pathname.match(/\/(g?s5|socks5|g?http)=([^/?#\s]+)/i))) {
         const type = socksMatch[1].toLowerCase();
-        我的SOCKS5账号 = socksMatch[2];
+        我的SOCKS5账号 = socksMatch[2].split('/')[0];
         启用SOCKS5反代 = type.includes('http') ? 'http' : 'socks5';
         启用SOCKS5全局反代 = type.startsWith('g') || 启用SOCKS5全局反代;
     }
@@ -1807,7 +1807,7 @@ async function 反代参数获取(request) {
     if (我的SOCKS5账号) {
         try {
             parsedSocks5Address = await 获取SOCKS5账号(我的SOCKS5账号);
-            启用SOCKS5反代 = searchParams.get('http') ? 'http' : 启用SOCKS5反代;
+            启用SOCKS5反代 = searchParams.get('http') ? 'http' : (启用SOCKS5反代 || 'socks5');
         } catch (err) {
             console.error('解析SOCKS5地址失败:', err.message);
             启用SOCKS5反代 = null;
