@@ -243,13 +243,16 @@ export default {
                                 const 完整优选列表 = config_JSON.优选订阅生成.本地IP库.随机IP ? (await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0] : await env.KV.get('ADD.txt') ? await 整理成数组(await env.KV.get('ADD.txt')) : (await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[0];
                                 const 优选API = [], 优选IP = [], 其他节点 = [];
                                 for (const 元素 of 完整优选列表) {
-                                    if (元素.toLowerCase().startsWith('https://')) 优选API.push(元素);
-                                    else if (元素.toLowerCase().includes('://')) {
+                                    if (元素.toLowerCase().startsWith('https://')) {
+                                        优选API.push(元素);
+                                    } else if (元素.toLowerCase().includes('://')) {
                                         if (元素.includes('#')) {
                                             const 地址备注分离 = 元素.split('#');
                                             其他节点.push(地址备注分离[0] + '#' + encodeURIComponent(decodeURIComponent(地址备注分离[1])));
                                         } else 其他节点.push(元素);
-                                    } else 优选IP.push(元素);
+                                    } else {
+                                        优选IP.push(元素);
+                                    }
                                 }
                                 const 请求优选API内容 = await 请求优选API(优选API);
                                 const 合并其他节点数组 = [...new Set(其他节点.concat(请求优选API内容[1]))];
@@ -258,28 +261,9 @@ export default {
                                 完整优选IP = [...new Set(优选IP.concat(优选API的IP))];
                             } else { // 优选订阅生成器
                                 let 优选订阅生成器HOST = url.searchParams.get('sub') || config_JSON.优选订阅生成.SUB;
-                                优选订阅生成器HOST = 优选订阅生成器HOST && !/^https?:\/\//i.test(优选订阅生成器HOST) ? `https://${优选订阅生成器HOST}` : 优选订阅生成器HOST;
-                                const 优选订阅生成器URL = `${优选订阅生成器HOST}/sub?host=example.com&uuid=00000000-0000-4000-8000-000000000000`;
-                                try {
-                                    const response = await fetch(优选订阅生成器URL, { headers: { 'User-Agent': 'v2rayN/edge' + 'tunnel (https://github.com/cmliu/edge' + 'tunnel)' } });
-                                    if (!response.ok) return new Response('优选订阅生成器异常：' + response.statusText, { status: response.status });
-                                    const 优选订阅生成器返回订阅内容 = atob(await response.text());
-                                    const 订阅行列表 = 优选订阅生成器返回订阅内容.includes('\r\n') ? 优选订阅生成器返回订阅内容.split('\r\n') : 优选订阅生成器返回订阅内容.split('\n');
-                                    for (const 行内容 of 订阅行列表) {
-                                        if (!行内容.trim()) continue; // 跳过空行
-                                        if (行内容.includes('00000000-0000-4000-8000-000000000000') && 行内容.includes('example.com')) { // 这是优选IP行，提取 域名:端口#备注
-                                            const 地址匹配 = 行内容.match(/:\/\/[^@]+@([^?]+)/);
-                                            if (地址匹配) {
-                                                let 地址端口 = 地址匹配[1], 备注 = ''; // 域名:端口 或 IP:端口
-                                                const 备注匹配 = 行内容.match(/#(.+)$/);
-                                                if (备注匹配) 备注 = '#' + decodeURIComponent(备注匹配[1]);
-                                                完整优选IP.push(地址端口 + 备注);
-                                            }
-                                        } else 其他节点LINK += 行内容 + '\n';
-                                    }
-                                } catch (error) {
-                                    return new Response('优选订阅生成器异常：' + error.message, { status: 403 });
-                                }
+                                const [优选生成器IP数组, 优选生成器其他节点] = await 获取优选订阅生成器数据(优选订阅生成器HOST);
+                                完整优选IP = 优选生成器IP数组;
+                                其他节点LINK = 优选生成器其他节点;
                             }
                             const ECHLINK参数 = config_JSON.ECH ? `&ech=${encodeURIComponent((config_JSON.ECHConfig.SNI ? config_JSON.ECHConfig.SNI + '+' : '') + config_JSON.ECHConfig.DNS)}` : '';
                             订阅内容 = 其他节点LINK + 完整优选IP.map(原始地址 => {
@@ -1607,6 +1591,53 @@ function base64Decode(str) {
     const bytes = new Uint8Array(atob(str).split('').map(c => c.charCodeAt(0)));
     const decoder = new TextDecoder('utf-8');
     return decoder.decode(bytes);
+}
+
+async function 获取优选订阅生成器数据(优选订阅生成器HOST) {
+    let 优选IP = [], 其他节点LINK = '';
+
+    // 格式化 HOST，确保以 https:// 开头
+    const 格式化HOST = 优选订阅生成器HOST && !/^https?:\/\//i.test(优选订阅生成器HOST)
+        ? `https://${优选订阅生成器HOST}`
+        : 优选订阅生成器HOST;
+
+    const 优选订阅生成器URL = `${格式化HOST}/sub?host=example.com&uuid=00000000-0000-4000-8000-000000000000`;
+
+    try {
+        const response = await fetch(优选订阅生成器URL, {
+            headers: { 'User-Agent': 'v2rayN/edge' + 'tunnel (https://github.com/cmliu/edge' + 'tunnel)' }
+        });
+
+        if (!response.ok) {
+            优选IP.push(`127.0.0.1:1234#${优选订阅生成器HOST}优选订阅生成器异常:${response.statusText}`);
+            return [优选IP, 其他节点LINK];
+        }
+
+        const 优选订阅生成器返回订阅内容 = atob(await response.text());
+        const 订阅行列表 = 优选订阅生成器返回订阅内容.includes('\r\n')
+            ? 优选订阅生成器返回订阅内容.split('\r\n')
+            : 优选订阅生成器返回订阅内容.split('\n');
+
+        for (const 行内容 of 订阅行列表) {
+            if (!行内容.trim()) continue; // 跳过空行
+            if (行内容.includes('00000000-0000-4000-8000-000000000000') && 行内容.includes('example.com')) {
+                // 这是优选IP行，提取 域名:端口#备注
+                const 地址匹配 = 行内容.match(/:\/\/[^@]+@([^?]+)/);
+                if (地址匹配) {
+                    let 地址端口 = 地址匹配[1], 备注 = ''; // 域名:端口 或 IP:端口
+                    const 备注匹配 = 行内容.match(/#(.+)$/);
+                    if (备注匹配) 备注 = '#' + decodeURIComponent(备注匹配[1]);
+                    优选IP.push(地址端口 + 备注);
+                }
+            } else {
+                其他节点LINK += 行内容 + '\n';
+            }
+        }
+    } catch (error) {
+        优选IP.push(`127.0.0.1:1234#${优选订阅生成器HOST}优选订阅生成器异常:${error.message}`);
+    }
+
+    return [优选IP, 其他节点LINK];
 }
 
 async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) {
