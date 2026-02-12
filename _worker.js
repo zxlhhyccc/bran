@@ -1656,6 +1656,15 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
     const results = new Set();
     let 订阅链接响应的明文LINK内容 = '', 需要订阅转换订阅URLs = [];
     await Promise.allSettled(urls.map(async (url) => {
+        if (url.toLowerCase().startsWith('sub://')) {
+            try {
+                const [优选IP, 其他节点LINK] = await 获取优选订阅生成器数据(url);
+                for (const ip of 优选IP) results.add(ip);
+                if (其他节点LINK) 订阅链接响应的明文LINK内容 += 其他节点LINK;
+            } catch (e) { }
+            return;
+        }
+
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 超时时间);
