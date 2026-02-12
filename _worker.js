@@ -262,8 +262,8 @@ export default {
                             } else { // 优选订阅生成器
                                 let 优选订阅生成器HOST = url.searchParams.get('sub') || config_JSON.优选订阅生成.SUB;
                                 const [优选生成器IP数组, 优选生成器其他节点] = await 获取优选订阅生成器数据(优选订阅生成器HOST);
-                                完整优选IP = 优选生成器IP数组;
-                                其他节点LINK = 优选生成器其他节点;
+                                完整优选IP = 完整优选IP.concat(优选生成器IP数组);
+                                其他节点LINK += 优选生成器其他节点;
                             }
                             const ECHLINK参数 = config_JSON.ECH ? `&ech=${encodeURIComponent((config_JSON.ECHConfig.SNI ? config_JSON.ECHConfig.SNI + '+' : '') + config_JSON.ECHConfig.DNS)}` : '';
                             订阅内容 = 其他节点LINK + 完整优选IP.map(原始地址 => {
