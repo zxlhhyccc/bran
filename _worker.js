@@ -1316,7 +1316,7 @@ function 批量替换域名(内容, hosts, 每组数量 = 2) {
     });
 }
 
-async function DoH查询(域名, 记录类型, DoH解析服务 = "https://1.0.0.1/dns-query") {
+async function DoH查询(域名, 记录类型, DoH解析服务 = "https://cloudflare-dns.com/dns-query") {
     const 开始时间 = performance.now();
     console.log(`[DoH查询] 开始查询 ${域名} ${记录类型} via ${DoH解析服务}`);
     try {
@@ -1352,7 +1352,7 @@ async function DoH查询(域名, 记录类型, DoH解析服务 = "https://1.0.0.
         qview.setUint16(12 + qname.length + 2, 1); // QCLASS = IN
 
         // 通过 POST 发送 dns-message 请求
-        console.log(`[DoH查询] 发送查询报文 ${域名} (type=${qtype}, ${query.length}字节)`);
+        console.log(`[DoH查询] 发送查询报文 ${域名} via ${DoH解析服务} (type=${qtype}, ${query.length}字节)`);
         const response = await fetch(DoH解析服务, {
             method: 'POST',
             headers: {
@@ -1362,7 +1362,7 @@ async function DoH查询(域名, 记录类型, DoH解析服务 = "https://1.0.0.
             body: query,
         });
         if (!response.ok) {
-            console.warn(`[DoH查询] 请求失败 ${域名} ${记录类型} HTTP ${response.status}`);
+            console.warn(`[DoH查询] 请求失败 ${域名} ${记录类型} via ${DoH解析服务} 响应代码:${response.status}`);
             return [];
         }
 
@@ -1371,7 +1371,7 @@ async function DoH查询(域名, 记录类型, DoH解析服务 = "https://1.0.0.
         const dv = new DataView(buf.buffer);
         const qdcount = dv.getUint16(4);
         const ancount = dv.getUint16(6);
-        console.log(`[DoH查询] 收到响应 ${域名} ${记录类型} (${buf.length}字节, ${ancount}条应答)`);
+        console.log(`[DoH查询] 收到响应 ${域名} ${记录类型} via ${DoH解析服务} (${buf.length}字节, ${ancount}条应答)`);
 
         // 解析域名（处理指针压缩）
         const 解析域名 = (pos) => {
@@ -1441,11 +1441,11 @@ async function DoH查询(域名, 记录类型, DoH解析服务 = "https://1.0.0.
             answers.push({ name, type, TTL: ttl, data, rdata });
         }
         const 耗时 = (performance.now() - 开始时间).toFixed(2);
-        console.log(`[DoH查询] 查询完成 ${域名} ${记录类型} ${耗时}ms 共${answers.length}条结果${answers.length > 0 ? '\n' + answers.map((a, i) => `  ${i + 1}. ${a.name} type=${a.type} TTL=${a.TTL} data=${a.data}`).join('\n') : ''}`);
+        console.log(`[DoH查询] 查询完成 ${域名} ${记录类型} via ${DoH解析服务} ${耗时}ms 共${answers.length}条结果${answers.length > 0 ? '\n' + answers.map((a, i) => `  ${i + 1}. ${a.name} type=${a.type} TTL=${a.TTL} data=${a.data}`).join('\n') : ''}`);
         return answers;
     } catch (error) {
         const 耗时 = (performance.now() - 开始时间).toFixed(2);
-        console.error(`[DoH查询] 查询失败 ${域名} ${记录类型} ${耗时}ms:`, error);
+        console.error(`[DoH查询] 查询失败 ${域名} ${记录类型} via ${DoH解析服务} ${耗时}ms:`, error);
         return [];
     }
 }
@@ -2157,8 +2157,13 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 
         if (proxyIP.includes('.william')) {
             try {
-                const txtRecords = await DoH查询(proxyIP, 'TXT');
-                const txtData = txtRecords.filter(r => r.type === 16).map(r => /** @type {string} */ (r.data));
+                let txtRecords = await DoH查询(proxyIP, 'TXT');
+                let txtData = txtRecords.filter(r => r.type === 16).map(r => /** @type {string} */ (r.data));
+                if (txtData.length === 0) {
+                    console.log(`[反代解析] 默认DoH未获取到TXT记录，切换Google DoH重试 ${proxyIP}`);
+                    txtRecords = await DoH查询(proxyIP, 'TXT', 'https://dns.google/dns-query');
+                    txtData = txtRecords.filter(r => r.type === 16).map(r => /** @type {string} */ (r.data));
+                }
                 if (txtData.length > 0) {
                     let data = txtData[0];
                     if (data.startsWith('"') && data.endsWith('"')) data = data.slice(1, -1);
@@ -2182,14 +2187,26 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 
             if (!ipv4Regex.test(地址) && !ipv6Regex.test(地址)) {
                 // 并行查询 A 和 AAAA 记录
-                const [aRecords, aaaaRecords] = await Promise.all([
+                let [aRecords, aaaaRecords] = await Promise.all([
                     DoH查询(地址, 'A'),
                     DoH查询(地址, 'AAAA')
                 ]);
 
-                const ipv4List = aRecords.filter(r => r.type === 1).map(r => r.data);
-                const ipv6List = aaaaRecords.filter(r => r.type === 28).map(r => `[${r.data}]`);
-                const ipAddresses = [...ipv4List, ...ipv6List];
+                let ipv4List = aRecords.filter(r => r.type === 1).map(r => r.data);
+                let ipv6List = aaaaRecords.filter(r => r.type === 28).map(r => `[${r.data}]`);
+                let ipAddresses = [...ipv4List, ...ipv6List];
+
+                // 默认DoH无结果时，切换Google DoH重试
+                if (ipAddresses.length === 0) {
+                    console.log(`[反代解析] 默认DoH未获取到解析结果，切换Google DoH重试 ${地址}`);
+                    [aRecords, aaaaRecords] = await Promise.all([
+                        DoH查询(地址, 'A', 'https://dns.google/dns-query'),
+                        DoH查询(地址, 'AAAA', 'https://dns.google/dns-query')
+                    ]);
+                    ipv4List = aRecords.filter(r => r.type === 1).map(r => r.data);
+                    ipv6List = aaaaRecords.filter(r => r.type === 28).map(r => `[${r.data}]`);
+                    ipAddresses = [...ipv4List, ...ipv6List];
+                }
 
                 所有反代数组 = ipAddresses.length > 0
                     ? ipAddresses.map(ip => [ip, 端口])
