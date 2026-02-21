@@ -273,6 +273,8 @@ export default {
                                 其他节点LINK += 优选生成器其他节点;
                             }
                             const ECHLINK参数 = config_JSON.ECH ? `&ech=${encodeURIComponent((config_JSON.ECHConfig.SNI ? config_JSON.ECHConfig.SNI + '+' : '') + config_JSON.ECHConfig.DNS)}` : '';
+                            let 完整节点路径 = config_JSON.随机路径 ? 随机路径(config_JSON.完整节点路径) : config_JSON.完整节点路径;
+                            if (ua.includes('loon') || ua.includes('surge')) 完整节点路径 = 完整节点路径.replace(/,/g, '%2C');
                             订阅内容 = 其他节点LINK + 完整优选IP.map(原始地址 => {
                                 // 统一正则: 匹配 域名/IPv4/IPv6地址 + 可选端口 + 可选备注
                                 // 示例: 
@@ -294,7 +296,7 @@ export default {
                                     return null;
                                 }
 
-                                return `${协议类型}://00000000-0000-4000-8000-000000000000@${节点地址}:${节点端口}?security=tls&type=${config_JSON.传输协议 + ECHLINK参数}&host=example.com&fp=${config_JSON.Fingerprint}&sni=example.com&path=${encodeURIComponent(config_JSON.随机路径 ? 随机路径(config_JSON.完整节点路径) : config_JSON.完整节点路径) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&insecure=1&allowInsecure=1' : ''}#${encodeURIComponent(节点备注)}`;
+                                return `${协议类型}://00000000-0000-4000-8000-000000000000@${节点地址}:${节点端口}?security=tls&type=${config_JSON.传输协议 + ECHLINK参数}&host=example.com&fp=${config_JSON.Fingerprint}&sni=example.com&path=${encodeURIComponent(完整节点路径) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&insecure=1&allowInsecure=1' : ''}#${encodeURIComponent(节点备注)}`;
                             }).filter(item => item !== null).join('\n');
                         } else { // 订阅转换
                             const 订阅转换URL = `${config_JSON.订阅转换配置.SUBAPI}/sub?target=${订阅类型}&url=${encodeURIComponent(url.protocol + '//' + url.host + '/sub?target=mixed&token=' + 订阅TOKEN + (url.searchParams.has('sub') && url.searchParams.get('sub') != '' ? `&sub=${url.searchParams.get('sub')}` : ''))}&config=${encodeURIComponent(config_JSON.订阅转换配置.SUBCONFIG)}&emoji=${config_JSON.订阅转换配置.SUBEMOJI}&scv=${config_JSON.跳过证书验证}`;
@@ -1183,13 +1185,13 @@ function Singbox订阅配置文件热补丁(SingBox_原始订阅内容, uuid = n
 
 function Surge订阅配置文件热补丁(content, url, config_JSON) {
     const 每行内容 = content.includes('\r\n') ? content.split('\r\n') : content.split('\n');
-
+    const 完整节点路径 = config_JSON.随机路径 ? 随机路径(config_JSON.完整节点路径) : config_JSON.完整节点路径;
     let 输出内容 = "";
     for (let x of 每行内容) {
         if (x.includes('= tro' + 'jan,') && !x.includes('ws=true') && !x.includes('ws-path=')) {
             const host = x.split("sni=")[1].split(",")[0];
             const 备改内容 = `sni=${host}, skip-cert-verify=${config_JSON.跳过证书验证}`;
-            const 正确内容 = `sni=${host}, skip-cert-verify=${config_JSON.跳过证书验证}, ws=true, ws-path=${config_JSON.随机路径 ? 随机路径(config_JSON.完整节点路径) : config_JSON.完整节点路径}, ws-headers=Host:"${host}"`;
+            const 正确内容 = `sni=${host}, skip-cert-verify=${config_JSON.跳过证书验证}, ws=true, ws-path=${完整节点路径.replace(/,/g, '%2C')}, ws-headers=Host:"${host}"`;
             输出内容 += x.replace(new RegExp(备改内容, 'g'), 正确内容).replace("[", "").replace("]", "") + '\n';
         } else {
             输出内容 += x + '\n';
@@ -1601,7 +1603,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
 
     let 路径反代参数 = '';
     if (代理配置 && config_JSON.反代.SOCKS5.账号) 路径反代参数 = (config_JSON.反代.SOCKS5.全局 ? 代理配置.全局 : 代理配置.标准).replace(占位符, config_JSON.反代.SOCKS5.账号);
-    else if (config_JSON.反代[_p] !== 'auto') 路径反代参数 = config_JSON.反代.路径模板[_p].replace(占位符, config_JSON.反代[_p].replace(/,/g, '%2C'));
+    else if (config_JSON.反代[_p] !== 'auto') 路径反代参数 = config_JSON.反代.路径模板[_p].replace(占位符, config_JSON.反代[_p]);
 
     let 反代查询参数 = '';
     if (路径反代参数.includes('?')) {
