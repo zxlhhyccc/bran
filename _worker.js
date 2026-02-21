@@ -1915,7 +1915,7 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 
 async function 反代参数获取(request) {
     const url = new URL(request.url);
-    const { pathname, searchParams } = url;
+    const { searchParams } = url, pathname = decodeURIComponent(url.pathname);
     const pathLower = pathname.toLowerCase();
 
     // 初始化
