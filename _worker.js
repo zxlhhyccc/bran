@@ -2153,31 +2153,30 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
             return [地址, 端口];
         }
 
+        const 反代IP数组 = await 整理成数组(proxyIP);
         let 所有反代数组 = [];
 
-        if (proxyIP.includes('.william')) {
-            try {
-                let txtRecords = await DoH查询(proxyIP, 'TXT');
-                let txtData = txtRecords.filter(r => r.type === 16).map(r => /** @type {string} */(r.data));
-                if (txtData.length === 0) {
-                    console.log(`[反代解析] 默认DoH未获取到TXT记录，切换Google DoH重试 ${proxyIP}`);
-                    txtRecords = await DoH查询(proxyIP, 'TXT', 'https://dns.google/dns-query');
-                    txtData = txtRecords.filter(r => r.type === 16).map(r => /** @type {string} */(r.data));
+        // 遍历数组中的每个IP元素进行处理
+        for (const singleProxyIP of 反代IP数组) {
+            if (singleProxyIP.includes('.william')) {
+                try {
+                    let txtRecords = await DoH查询(singleProxyIP, 'TXT');
+                    let txtData = txtRecords.filter(r => r.type === 16).map(r => /** @type {string} */(r.data));
+                    if (txtData.length === 0) {
+                        console.log(`[反代解析] 默认DoH未获取到TXT记录，切换Google DoH重试 ${singleProxyIP}`);
+                        txtRecords = await DoH查询(singleProxyIP, 'TXT', 'https://dns.google/dns-query');
+                        txtData = txtRecords.filter(r => r.type === 16).map(r => /** @type {string} */(r.data));
+                    }
+                    if (txtData.length > 0) {
+                        let data = txtData[0];
+                        if (data.startsWith('"') && data.endsWith('"')) data = data.slice(1, -1);
+                        const prefixes = data.replace(/\\010/g, ',').replace(/\n/g, ',').split(',').map(s => s.trim()).filter(Boolean);
+                        所有反代数组.push(...prefixes.map(prefix => 解析地址端口字符串(prefix)));
+                    }
+                } catch (error) {
+                    console.error('解析William域名失败:', error);
                 }
-                if (txtData.length > 0) {
-                    let data = txtData[0];
-                    if (data.startsWith('"') && data.endsWith('"')) data = data.slice(1, -1);
-                    const prefixes = data.replace(/\\010/g, ',').replace(/\n/g, ',').split(',').map(s => s.trim()).filter(Boolean);
-                    所有反代数组 = prefixes.map(prefix => 解析地址端口字符串(prefix));
-                }
-            } catch (error) {
-                console.error('解析William域名失败:', error);
-            }
-        } else {
-            const 反代IP数组 = await 整理成数组(proxyIP);
-
-            // 遍历数组中的每个IP元素进行处理
-            for (const singleProxyIP of 反代IP数组) {
+            } else {
                 let [地址, 端口] = 解析地址端口字符串(singleProxyIP);
 
                 if (singleProxyIP.includes('.tp')) {
