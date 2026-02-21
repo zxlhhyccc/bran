@@ -1601,7 +1601,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
 
     let 路径反代参数 = '';
     if (代理配置 && config_JSON.反代.SOCKS5.账号) 路径反代参数 = (config_JSON.反代.SOCKS5.全局 ? 代理配置.全局 : 代理配置.标准).replace(占位符, config_JSON.反代.SOCKS5.账号);
-    else if (config_JSON.反代[_p] !== 'auto') 路径反代参数 = config_JSON.反代.路径模板[_p].replace(占位符, config_JSON.反代[_p]);
+    else if (config_JSON.反代[_p] !== 'auto') 路径反代参数 = config_JSON.反代.路径模板[_p].replace(占位符, config_JSON.反代[_p].replace(/,/g, '%2C'));
 
     let 反代查询参数 = '';
     if (路径反代参数.includes('?')) {
