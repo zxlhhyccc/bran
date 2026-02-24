@@ -248,7 +248,7 @@ export default {
                                     } else {
                                         const subMatch = 元素.match(/sub\s*=\s*([^\s&#]+)/i);
                                         if (subMatch && subMatch[1].trim().includes('.')) {
-                                            优选API.push('sub://' + subMatch[1].trim());
+                                            优选API.push('sub://' + subMatch[1].trim() + (元素.includes('#') ? ('#' + 元素.split('#')[1]) : ''));
                                         } else if (元素.toLowerCase().startsWith('https://')) {
                                             优选API.push(元素);
                                         } else if (元素.toLowerCase().includes('://')) {
@@ -1736,7 +1736,7 @@ function base64Decode(str) {
 }
 
 async function 获取优选订阅生成器数据(优选订阅生成器HOST) {
-    let 优选IP = [], 其他节点LINK = '', 格式化HOST = 优选订阅生成器HOST.replace(/^sub:\/\//i, 'https://');
+    let 优选IP = [], 其他节点LINK = '', 格式化HOST = 优选订阅生成器HOST.replace(/^sub:\/\//i, 'https://').split('#')[0];
     if (!/^https?:\/\//i.test(格式化HOST)) 格式化HOST = `https://${格式化HOST}`;
 
     try {
