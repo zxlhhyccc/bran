@@ -299,7 +299,7 @@ export default {
                                 }
 
                                 let 完整节点路径 = config_JSON.完整节点路径;
-                                if (反代IP池.length > 0) {
+                                if (反代IP池.length > 0 && !["2053", "2083", "2087", "2096", "8443"].includes(节点端口)) {
                                     const 匹配到的反代IP = 反代IP池.find(p => p.includes(节点地址));
                                     if (匹配到的反代IP) 完整节点路径 = (`${config_JSON.PATH}/proxyip=${匹配到的反代IP}`).replace(/\/\//g, '/');
                                 }
