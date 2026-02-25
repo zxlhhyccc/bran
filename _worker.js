@@ -1991,9 +1991,7 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
     }));
     // 将LINK内容转换为数组并去重
     const LINK数组 = 订阅链接响应的明文LINK内容.trim() ? [...new Set(订阅链接响应的明文LINK内容.split(/\r?\n/).filter(line => line.trim() !== ''))] : [];
-    const 排除端口 = [":2053", ":2083", ":2087", ":2096", ":8443"];
-    const 过滤后反代IP池 = Array.from(反代IP池).filter(ip => !排除端口.some(p => ip.endsWith(p)));
-    return [Array.from(results), LINK数组, 需要订阅转换订阅URLs, 过滤后反代IP池];
+    return [Array.from(results), LINK数组, 需要订阅转换订阅URLs, Array.from(反代IP池)];
 }
 
 async function 反代参数获取(request) {
