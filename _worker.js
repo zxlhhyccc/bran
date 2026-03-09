@@ -75,7 +75,8 @@ export default {
                             try {
                                 new URL(待验证优选URL);
                                 const 请求优选API内容 = await 请求优选API([待验证优选URL], url.searchParams.get('port') || '443');
-                                const 优选API的IP = 请求优选API内容[0].length > 0 ? 请求优选API内容[0] : 请求优选API内容[1];
+                                let 优选API的IP = 请求优选API内容[0].length > 0 ? 请求优选API内容[0] : 请求优选API内容[1];
+                                优选API的IP = 优选API的IP.map(item => item.replace(/#(.+)$/, (_, remark) => '#' + decodeURIComponent(remark)));
                                 return new Response(JSON.stringify({ success: true, data: 优选API的IP }, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                             } catch (err) {
                                 const errorResponse = { msg: '验证优选API失败，失败原因：' + err.message, error: err.message };
