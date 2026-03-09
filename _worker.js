@@ -1216,6 +1216,7 @@ function Surge订阅配置文件热补丁(content, url, config_JSON) {
 
 async function 请求日志记录(env, request, 访问IP, 请求类型 = "Get_SUB", config_JSON) {
     const KV容量限制 = 4;//MB
+    if (env.OFF_LOG) return;
     try {
         const 当前时间 = new Date();
         const 日志内容 = { TYPE: 请求类型, IP: 访问IP, ASN: `AS${request.cf.asn || '0'} ${request.cf.asOrganization || 'Unknown'}`, CC: `${request.cf.country || 'N/A'} ${request.cf.city || 'N/A'}`, URL: request.url, UA: request.headers.get('User-Agent') || 'Unknown', TIME: 当前时间.getTime() };
