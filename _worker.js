@@ -668,69 +668,6 @@ async function 处理XHTTP请求(request, yourUUID) {
 }
 
 ///////////////////////////////////////////////////////////////////////gRPC传输数据///////////////////////////////////////////////
-function gRPC拼接Uint8Array(left, right) {
-    const merged = new Uint8Array(left.length + right.length);
-    merged.set(left, 0);
-    merged.set(right, left.length);
-    return merged;
-}
-
-function gRPC读取Varint(bytes, start = 0) {
-    let value = 0;
-    let shift = 0;
-    let offset = start;
-    while (offset < bytes.length) {
-        const current = bytes[offset++];
-        value |= (current & 0x7f) << shift;
-        if ((current & 0x80) === 0) return { value, offset };
-        shift += 7;
-        if (shift > 35) break;
-    }
-    return null;
-}
-
-function gRPC编码Varint(value) {
-    const bytes = [];
-    let remaining = value >>> 0;
-    while (remaining > 127) {
-        bytes.push((remaining & 0x7f) | 0x80);
-        remaining >>>= 7;
-    }
-    bytes.push(remaining);
-    return new Uint8Array(bytes);
-}
-
-function gRPC剥离Protobuf(data) {
-    if (!data || data.byteLength < 2 || data[0] !== 0x0a) return data;
-    const parsed = gRPC读取Varint(data, 1);
-    if (!parsed) return data;
-    return data.slice(parsed.offset);
-}
-
-function gRPC封装响应帧(payload) {
-    const data = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
-    const lenBytes = gRPC编码Varint(data.byteLength);
-    const protobufLen = 1 + lenBytes.length + data.byteLength;
-    const frame = new Uint8Array(5 + protobufLen);
-    frame[0] = 0;
-    frame[1] = (protobufLen >>> 24) & 0xff;
-    frame[2] = (protobufLen >>> 16) & 0xff;
-    frame[3] = (protobufLen >>> 8) & 0xff;
-    frame[4] = protobufLen & 0xff;
-    frame[5] = 0x0a;
-    frame.set(lenBytes, 6);
-    frame.set(data, 6 + lenBytes.length);
-    return frame;
-}
-
-function gRPC转ArrayBuffer(data) {
-    if (data instanceof ArrayBuffer) return data;
-    if (ArrayBuffer.isView(data)) {
-        return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-    }
-    return new Uint8Array(data).buffer;
-}
-
 async function 处理gRPC请求(request, yourUUID) {
     if (!request.body) return new Response('Bad Request', { status: 400 });
     const reader = request.body.getReader();
@@ -759,7 +696,24 @@ async function 处理gRPC请求(request, yourUUID) {
                 send(data) {
                     if (已关闭) return;
                     const chunk = data instanceof Uint8Array ? data : new Uint8Array(data);
-                    const frame = gRPC封装响应帧(chunk);
+                    const lenBytes数组 = [];
+                    let remaining = chunk.byteLength >>> 0;
+                    while (remaining > 127) {
+                        lenBytes数组.push((remaining & 0x7f) | 0x80);
+                        remaining >>>= 7;
+                    }
+                    lenBytes数组.push(remaining);
+                    const lenBytes = new Uint8Array(lenBytes数组);
+                    const protobufLen = 1 + lenBytes.length + chunk.byteLength;
+                    const frame = new Uint8Array(5 + protobufLen);
+                    frame[0] = 0;
+                    frame[1] = (protobufLen >>> 24) & 0xff;
+                    frame[2] = (protobufLen >>> 16) & 0xff;
+                    frame[3] = (protobufLen >>> 8) & 0xff;
+                    frame[4] = protobufLen & 0xff;
+                    frame[5] = 0x0a;
+                    frame.set(lenBytes, 6);
+                    frame.set(chunk, 6 + lenBytes.length);
                     发送队列.push(frame);
                     队列字节数 += frame.byteLength;
                     if (队列字节数 >= 下行缓存上限) 刷新发送队列();
@@ -807,51 +761,17 @@ async function 处理gRPC请求(request, yourUUID) {
                 try { controller.close(); } catch (e) { }
             };
 
-            const 写入远端 = async (payload) => {
-                const writer = remoteConnWrapper.socket.writable.getWriter();
-                try {
-                    await writer.write(payload);
-                } finally {
-                    writer.releaseLock();
-                }
-            };
-
-            const 处理首包 = async (payload) => {
-                const 首包buffer = gRPC转ArrayBuffer(payload);
-                const 首包bytes = new Uint8Array(首包buffer);
-                if (判断是否是木马 === null) 判断是否是木马 = 首包bytes.byteLength >= 58 && 首包bytes[56] === 0x0d && 首包bytes[57] === 0x0a;
-                if (判断是否是木马) {
-                    const 解析结果 = 解析木马请求(首包buffer, yourUUID);
-                    if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid trojan request');
-                    const { port, hostname, rawClientData } = 解析结果;
-                    //console.log(`[gRPC] 木马首包: ${hostname}:${port}`);
-                    if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
-                    await forwardataTCP(hostname, port, rawClientData, grpcBridge, null, remoteConnWrapper, yourUUID);
-                    return;
-                }
-                const 解析结果 = 解析魏烈思请求(首包buffer, yourUUID);
-                if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
-                const { port, hostname, rawIndex, version, isUDP } = 解析结果;
-                //console.log(`[gRPC] 魏烈思首包: ${hostname}:${port} | UDP: ${isUDP ? '是' : '否'}`);
-                if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
-                if (isUDP) {
-                    if (port !== 53) throw new Error('UDP is not supported');
-                    isDnsQuery = true;
-                }
-                const respHeader = new Uint8Array([version[0], 0]);
-                grpcBridge.send(respHeader);
-                const rawData = 首包buffer.slice(rawIndex);
-                if (isDnsQuery) return await forwardataudp(rawData, grpcBridge, null);
-                await forwardataTCP(hostname, port, rawData, grpcBridge, null, remoteConnWrapper, yourUUID);
-            };
-
             try {
                 let pending = new Uint8Array(0);
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
                     if (!value || value.byteLength === 0) continue;
-                    pending = gRPC拼接Uint8Array(pending, new Uint8Array(value));
+                    const 当前块 = value instanceof Uint8Array ? value : new Uint8Array(value);
+                    const merged = new Uint8Array(pending.length + 当前块.length);
+                    merged.set(pending, 0);
+                    merged.set(当前块, pending.length);
+                    pending = merged;
                     while (pending.byteLength >= 5) {
                         const grpcLen = ((pending[1] << 24) >>> 0) | (pending[2] << 16) | (pending[3] << 8) | pending[4];
                         const frameSize = 5 + grpcLen;
@@ -859,16 +779,64 @@ async function 处理gRPC请求(request, yourUUID) {
                         const grpcPayload = pending.slice(5, frameSize);
                         pending = pending.slice(frameSize);
                         if (!grpcPayload.byteLength) continue;
-                        const payload = gRPC剥离Protobuf(grpcPayload);
+                        let payload = grpcPayload;
+                        if (payload.byteLength >= 2 && payload[0] === 0x0a) {
+                            let shift = 0;
+                            let offset = 1;
+                            let varint有效 = false;
+                            while (offset < payload.length) {
+                                const current = payload[offset++];
+                                if ((current & 0x80) === 0) {
+                                    varint有效 = true;
+                                    break;
+                                }
+                                shift += 7;
+                                if (shift > 35) break;
+                            }
+                            if (varint有效) payload = payload.slice(offset);
+                        }
                         if (!payload.byteLength) continue;
                         if (isDnsQuery) {
                             await forwardataudp(payload, grpcBridge, null);
                             continue;
                         }
                         if (remoteConnWrapper.socket) {
-                            await 写入远端(payload);
+                            const writer = remoteConnWrapper.socket.writable.getWriter();
+                            try {
+                                await writer.write(payload);
+                            } finally {
+                                writer.releaseLock();
+                            }
                         } else {
-                            await 处理首包(payload);
+                            let 首包buffer;
+                            if (payload instanceof ArrayBuffer) 首包buffer = payload;
+                            else if (ArrayBuffer.isView(payload)) 首包buffer = payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength);
+                            else 首包buffer = new Uint8Array(payload).buffer;
+                            const 首包bytes = new Uint8Array(首包buffer);
+                            if (判断是否是木马 === null) 判断是否是木马 = 首包bytes.byteLength >= 58 && 首包bytes[56] === 0x0d && 首包bytes[57] === 0x0a;
+                            if (判断是否是木马) {
+                                const 解析结果 = 解析木马请求(首包buffer, yourUUID);
+                                if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid trojan request');
+                                const { port, hostname, rawClientData } = 解析结果;
+                                //console.log(`[gRPC] 木马首包: ${hostname}:${port}`);
+                                if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
+                                await forwardataTCP(hostname, port, rawClientData, grpcBridge, null, remoteConnWrapper, yourUUID);
+                            } else {
+                                const 解析结果 = 解析魏烈思请求(首包buffer, yourUUID);
+                                if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
+                                const { port, hostname, rawIndex, version, isUDP } = 解析结果;
+                                //console.log(`[gRPC] 魏烈思首包: ${hostname}:${port} | UDP: ${isUDP ? '是' : '否'}`);
+                                if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
+                                if (isUDP) {
+                                    if (port !== 53) throw new Error('UDP is not supported');
+                                    isDnsQuery = true;
+                                }
+                                const respHeader = new Uint8Array([version[0], 0]);
+                                grpcBridge.send(respHeader);
+                                const rawData = 首包buffer.slice(rawIndex);
+                                if (isDnsQuery) await forwardataudp(rawData, grpcBridge, null);
+                                else await forwardataTCP(hostname, port, rawData, grpcBridge, null, remoteConnWrapper, yourUUID);
+                            }
                         }
                     }
                     刷新发送队列();
