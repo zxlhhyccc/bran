@@ -293,7 +293,7 @@ export default {
                             }
                             const ECHLINK参数 = config_JSON.ECH ? `&ech=${encodeURIComponent((config_JSON.ECHConfig.SNI ? config_JSON.ECHConfig.SNI + '+' : '') + config_JSON.ECHConfig.DNS)}` : '';
                             const isLoonOrSurge = ua.includes('loon') || ua.includes('surge');
-                            const 传输协议 = config_JSON.传输协议 === 'xhttp' ? 'xhttp' : (config_JSON.传输协议 === 'grpc' ? (config_JSON.gRPC模式 === 'multi' ? 'grpc&mode=multi' : 'grpc&mode=gun') : 'ws');
+                            const 传输协议 = config_JSON.传输协议 === 'xhttp' ? 'xhttp&mode=stream-one' : (config_JSON.传输协议 === 'grpc' ? (config_JSON.gRPC模式 === 'multi' ? 'grpc&mode=multi' : 'grpc&mode=gun') : 'ws');
                             let 路径字段名 = 'path', 域名字段名 = 'host';
                             if (config_JSON.传输协议 === 'grpc') 路径字段名 = 'serviceName', 域名字段名 = 'authority';
                             订阅内容 = 其他节点LINK + 完整优选IP.map(原始地址 => {
