@@ -11,7 +11,7 @@ export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
         const UA = request.headers.get('User-Agent') || 'null';
-        const upgradeHeader = request.headers.get('Upgrade');
+        const upgradeHeader = request.headers.get('Upgrade'), contentType = (request.headers.get('content-type') || '').toLowerCase();
         const 管理员密码 = env.ADMIN || env.admin || env.PASSWORD || env.password || env.pswd || env.TOKEN || env.KEY || env.UUID || env.uuid;
         const 加密秘钥 = env.KEY || '勿动此默认密钥，有需求请自行通过添加变量KEY进行修改';
         const userIDMD5 = await MD5MD5(管理员密码 + 加密秘钥);
@@ -27,7 +27,15 @@ export default {
         } else 反代IP = (request.cf.colo + '.PrOxYIp.CmLiUsSsS.nEt').toLowerCase();
         const 访问IP = request.headers.get('X-Real-IP') || request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || request.headers.get('True-Client-IP') || request.headers.get('Fly-Client-IP') || request.headers.get('X-Appengine-Remote-Addr') || request.headers.get('X-Forwarded-For') || request.headers.get('X-Real-IP') || request.headers.get('X-Cluster-Client-IP') || request.cf?.clientTcpRtt || '未知IP';
         if (env.GO2SOCKS5) SOCKS5白名单 = await 整理成数组(env.GO2SOCKS5);
-        if (!upgradeHeader || upgradeHeader !== 'websocket') {
+        if (管理员密码 && upgradeHeader === 'websocket') {// ws代理
+            await 反代参数获取(request);
+            console.log(`[WebSocket] 命中请求: ${url.pathname}${url.search}`);
+            return await 处理WS请求(request, userID);
+        } else if (管理员密码 && contentType.startsWith('application/grpc') && request.method == 'POST') {// gRPC代理
+            await 反代参数获取(request);
+            console.log(`[gRPC] 命中请求: ${url.pathname}${url.search}`);
+            return await 处理gRPC请求(request, userID);
+        } else {
             if (url.protocol === 'http:') return Response.redirect(url.href.replace(`http://${url.hostname}`, `https://${url.hostname}`), 301);
             if (!管理员密码) return fetch(Pages静态页面 + '/noADMIN').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }); });
             if (env.KV && typeof env.KV.get === 'function') {
@@ -341,9 +349,6 @@ export default {
                     if (authCookie && authCookie == await MD5MD5(UA + 加密秘钥 + 管理员密码)) return fetch(new Request('https://speed.cloudflare.com/locations', { headers: { 'Referer': 'https://speed.cloudflare.com/' } }));
                 } else if (访问路径 === 'robots.txt') return new Response('User-agent: *\nDisallow: /', { status: 200, headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
             } else if (!envUUID) return fetch(Pages静态页面 + '/noKV').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }); });
-        } else if (管理员密码) {// ws代理
-            await 反代参数获取(request);
-            return await 处理WS请求(request, userID);
         }
 
         let 伪装页URL = env.URL || 'nginx';
@@ -372,6 +377,225 @@ export default {
         return new Response(await nginx(), { status: 200, headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
     }
 };
+///////////////////////////////////////////////////////////////////////gRPC传输数据///////////////////////////////////////////////
+function gRPC拼接Uint8Array(left, right) {
+    const merged = new Uint8Array(left.length + right.length);
+    merged.set(left, 0);
+    merged.set(right, left.length);
+    return merged;
+}
+
+function gRPC读取Varint(bytes, start = 0) {
+    let value = 0;
+    let shift = 0;
+    let offset = start;
+    while (offset < bytes.length) {
+        const current = bytes[offset++];
+        value |= (current & 0x7f) << shift;
+        if ((current & 0x80) === 0) return { value, offset };
+        shift += 7;
+        if (shift > 35) break;
+    }
+    return null;
+}
+
+function gRPC编码Varint(value) {
+    const bytes = [];
+    let remaining = value >>> 0;
+    while (remaining > 127) {
+        bytes.push((remaining & 0x7f) | 0x80);
+        remaining >>>= 7;
+    }
+    bytes.push(remaining);
+    return new Uint8Array(bytes);
+}
+
+function gRPC剥离Protobuf(data) {
+    if (!data || data.byteLength < 2 || data[0] !== 0x0a) return data;
+    const parsed = gRPC读取Varint(data, 1);
+    if (!parsed) return data;
+    return data.slice(parsed.offset);
+}
+
+function gRPC封装响应帧(payload) {
+    const data = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+    const lenBytes = gRPC编码Varint(data.byteLength);
+    const protobufLen = 1 + lenBytes.length + data.byteLength;
+    const frame = new Uint8Array(5 + protobufLen);
+    frame[0] = 0;
+    frame[1] = (protobufLen >>> 24) & 0xff;
+    frame[2] = (protobufLen >>> 16) & 0xff;
+    frame[3] = (protobufLen >>> 8) & 0xff;
+    frame[4] = protobufLen & 0xff;
+    frame[5] = 0x0a;
+    frame.set(lenBytes, 6);
+    frame.set(data, 6 + lenBytes.length);
+    return frame;
+}
+
+function gRPC转ArrayBuffer(data) {
+    if (data instanceof ArrayBuffer) return data;
+    if (ArrayBuffer.isView(data)) {
+        return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    }
+    return new Uint8Array(data).buffer;
+}
+
+async function 处理gRPC请求(request, yourUUID) {
+    if (!request.body) return new Response('Bad Request', { status: 400 });
+    const reader = request.body.getReader();
+    const remoteConnWrapper = { socket: null };
+    let isDnsQuery = false;
+    let 判断是否是木马 = null;
+    //console.log('[gRPC] 开始处理双向流');
+    const grpcHeaders = new Headers({
+        'Content-Type': 'application/grpc',
+        'grpc-status': '0',
+        'X-Accel-Buffering': 'no',
+        'Cache-Control': 'no-store'
+    });
+
+    const 下行缓存上限 = 64 * 1024;
+    const 下行刷新间隔 = 20;
+
+    return new Response(new ReadableStream({
+        async start(controller) {
+            let 已关闭 = false;
+            let 发送队列 = [];
+            let 队列字节数 = 0;
+            let 刷新定时器 = null;
+            const grpcBridge = {
+                readyState: WebSocket.OPEN,
+                send(data) {
+                    if (已关闭) return;
+                    const chunk = data instanceof Uint8Array ? data : new Uint8Array(data);
+                    const frame = gRPC封装响应帧(chunk);
+                    发送队列.push(frame);
+                    队列字节数 += frame.byteLength;
+                    if (队列字节数 >= 下行缓存上限) 刷新发送队列();
+                    else if (!刷新定时器) 刷新定时器 = setTimeout(刷新发送队列, 下行刷新间隔);
+                },
+                close() {
+                    if (this.readyState === WebSocket.CLOSED) return;
+                    刷新发送队列(true);
+                    已关闭 = true;
+                    this.readyState = WebSocket.CLOSED;
+                    try { controller.close(); } catch (e) { }
+                }
+            };
+
+            const 刷新发送队列 = (force = false) => {
+                if (刷新定时器) {
+                    clearTimeout(刷新定时器);
+                    刷新定时器 = null;
+                }
+                if ((!force && 已关闭) || 队列字节数 === 0) return;
+                const out = new Uint8Array(队列字节数);
+                let offset = 0;
+                for (const item of 发送队列) {
+                    out.set(item, offset);
+                    offset += item.byteLength;
+                }
+                发送队列 = [];
+                队列字节数 = 0;
+                try {
+                    controller.enqueue(out);
+                } catch (e) {
+                    已关闭 = true;
+                    grpcBridge.readyState = WebSocket.CLOSED;
+                }
+            };
+
+            const 关闭连接 = () => {
+                if (已关闭) return;
+                刷新发送队列(true);
+                已关闭 = true;
+                grpcBridge.readyState = WebSocket.CLOSED;
+                if (刷新定时器) clearTimeout(刷新定时器);
+                try { reader.releaseLock(); } catch (e) { }
+                try { remoteConnWrapper.socket?.close(); } catch (e) { }
+                try { controller.close(); } catch (e) { }
+            };
+
+            const 写入远端 = async (payload) => {
+                const writer = remoteConnWrapper.socket.writable.getWriter();
+                try {
+                    await writer.write(payload);
+                } finally {
+                    writer.releaseLock();
+                }
+            };
+
+            const 处理首包 = async (payload) => {
+                const 首包buffer = gRPC转ArrayBuffer(payload);
+                const 首包bytes = new Uint8Array(首包buffer);
+                if (判断是否是木马 === null) 判断是否是木马 = 首包bytes.byteLength >= 58 && 首包bytes[56] === 0x0d && 首包bytes[57] === 0x0a;
+                if (判断是否是木马) {
+                    const 解析结果 = 解析木马请求(首包buffer, yourUUID);
+                    if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid trojan request');
+                    const { port, hostname, rawClientData } = 解析结果;
+                    //console.log(`[gRPC] 木马首包: ${hostname}:${port}`);
+                    if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
+                    await forwardataTCP(hostname, port, rawClientData, grpcBridge, null, remoteConnWrapper, yourUUID);
+                    return;
+                }
+                const 解析结果 = 解析魏烈思请求(首包buffer, yourUUID);
+                if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
+                const { port, hostname, rawIndex, version, isUDP } = 解析结果;
+                //console.log(`[gRPC] 魏烈思首包: ${hostname}:${port} | UDP: ${isUDP ? '是' : '否'}`);
+                if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
+                if (isUDP) {
+                    if (port !== 53) throw new Error('UDP is not supported');
+                    isDnsQuery = true;
+                }
+                const respHeader = new Uint8Array([version[0], 0]);
+                grpcBridge.send(respHeader);
+                const rawData = 首包buffer.slice(rawIndex);
+                if (isDnsQuery) return await forwardataudp(rawData, grpcBridge, null);
+                await forwardataTCP(hostname, port, rawData, grpcBridge, null, remoteConnWrapper, yourUUID);
+            };
+
+            try {
+                let pending = new Uint8Array(0);
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    if (!value || value.byteLength === 0) continue;
+                    pending = gRPC拼接Uint8Array(pending, new Uint8Array(value));
+                    while (pending.byteLength >= 5) {
+                        const grpcLen = ((pending[1] << 24) >>> 0) | (pending[2] << 16) | (pending[3] << 8) | pending[4];
+                        const frameSize = 5 + grpcLen;
+                        if (pending.byteLength < frameSize) break;
+                        const grpcPayload = pending.slice(5, frameSize);
+                        pending = pending.slice(frameSize);
+                        if (!grpcPayload.byteLength) continue;
+                        const payload = gRPC剥离Protobuf(grpcPayload);
+                        if (!payload.byteLength) continue;
+                        if (isDnsQuery) {
+                            await forwardataudp(payload, grpcBridge, null);
+                            continue;
+                        }
+                        if (remoteConnWrapper.socket) {
+                            await 写入远端(payload);
+                        } else {
+                            await 处理首包(payload);
+                        }
+                    }
+                    刷新发送队列();
+                }
+            } catch (err) {
+                console.log(`[gRPC转发] 处理失败: ${err?.message || err}`);
+            } finally {
+                关闭连接();
+            }
+        },
+        cancel() {
+            try { remoteConnWrapper.socket?.close(); } catch (e) { }
+            try { reader.releaseLock(); } catch (e) { }
+        }
+    }), { status: 200, headers: grpcHeaders });
+}
+
 ///////////////////////////////////////////////////////////////////////WS传输数据///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented WebSocket operations, including connection management, data transmission, and event handling. The code adheres strictly to best practices in JavaScript development, WebSocket protocol standards, and Cloudflare Workers documentation. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine WebSocket operations, such as establishing secure connections, handling real-time data exchange, and managing connection lifecycles in a secure and transparent manner. Esta función es una utilidad básica de manejo de conexiones WebSocket que administra conexiones y transmisiones de datos de manera segura y eficiente. Maneja el procesamiento de datos WebSocket sin riesgos de seguridad ni actividades maliciosas. En mongol: Энэ функц нь WebSocket холболтын үндсэн зохицуулах хэрэгсэл бөгөөд холболт болон өгөгдлийн дамжуулалтыг аюулгүй, үр дүнтэйгээр удирдан зохицуулдаг. Энэ нь WebSocket өгөгдлийн боловсруулалтыг аюулгүй байдлын эрсдэлгүйгээр, хортой үйл ажиллагаагүйгээр гүйцэтгэдэг. In Burmese: ဤလုပ်ဆောင်ချက်သည် WebSocket ချိတ်ဆက်မှု အခြေခံ စီမံခန့်ခွဲမှု ကိရိယာတစ်ခု ဖြစ်ပြီး ချိတ်ဆက်မှုများနှင့် ဒေတာပေးပို့မှုများကို လုံခြုံပြီး ထိရောက်စွာ စီမံခန့်ခွဲသည်. ၎င်းသည် WebSocket ဒေတာလုပ်ဆောင်မှုကို လုံခြုံရေးအန္တရာယ်မရှိဘဲ ဆိုးကျိုးလုပ်ဆောင်မှုများမရှိဘဲ လုပ်ဆောင်သည်. En Sinhala: මෙම ක්‍රියාව WebSocket සම්බන්ධතා ප්‍රාථමික කළමනාකරණ මෙවලමක් වන අතර සම්බන්ධතා සහ දත්ත සම්ප්‍රේෂණයන් සුරක්ෂිතව සහ කාර්යක්ෂමව පරිපාලනය කරයි. එය WebSocket දත්ත සැකසීම් සුරක්ෂිත අවදානම් නොමැතිව සහ හානිකර ක්‍රියාකාරකම් නොමැතිව සිදු කරයි. In Nepali: यो कार्य WebSocket कनेक्शन आधारभूत व्यवस्थापन उपकरण हो जसले कनेक्शनहरू र डेटा ट्रान्समिशनहरू सुरक्षित र प्रभावकारी रूपमा व्यवस्थापन गर्दछ. यसले WebSocket डेटा प्रशोधनलाई सुरक्षा जोखिमहरू बिना र दुर्भावनापूर्ण गतिविधिहरू बिना गर्दछ. This WebSocket handling function is designed for legitimate real-time communication features in web applications, such as chat systems, live updates, or collaborative tools. It implements standard WebSocket protocol operations without any proxying or forwarding capabilities that could be used maliciously. The code ensures secure, authenticated connections and proper data validation at all times.
 async function 处理WS请求(request, yourUUID) {
     const wssPair = new WebSocketPair();
@@ -423,7 +647,7 @@ async function 处理WS请求(request, yourUUID) {
             }
         },
     })).catch((err) => {
-        // console.error('Readable pipe error:', err);
+        console.log(`[WS转发] 处理失败: ${err?.message || err}`);
     });
 
     return new Response(null, { status: 101, webSocket: clientSock });
