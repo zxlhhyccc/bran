@@ -293,6 +293,9 @@ export default {
                             }
                             const ECHLINK参数 = config_JSON.ECH ? `&ech=${encodeURIComponent((config_JSON.ECHConfig.SNI ? config_JSON.ECHConfig.SNI + '+' : '') + config_JSON.ECHConfig.DNS)}` : '';
                             const isLoonOrSurge = ua.includes('loon') || ua.includes('surge');
+                            const 传输协议 = config_JSON.传输协议 === 'xhttp' ? 'xhttp' : (config_JSON.传输协议 === 'grpc' ? (config_JSON.gRPC模式 === 'multi' ? 'grpc&mode=multi' : 'grpc&mode=gun') : 'ws');
+                            let 路径字段名 = 'path', 域名字段名 = 'host';
+                            if (config_JSON.传输协议 === 'grpc') 路径字段名 = 'serviceName', 域名字段名 = 'authority';
                             订阅内容 = 其他节点LINK + 完整优选IP.map(原始地址 => {
                                 // 统一正则: 匹配 域名/IPv4/IPv6地址 + 可选端口 + 可选备注
                                 // 示例: 
@@ -321,7 +324,7 @@ export default {
                                 }
                                 if (isLoonOrSurge) 完整节点路径 = 完整节点路径.replace(/,/g, '%2C');
 
-                                return `${协议类型}://00000000-0000-4000-8000-000000000000@${节点地址}:${节点端口}?security=tls&type=${config_JSON.传输协议 + ECHLINK参数}&host=example.com&fp=${config_JSON.Fingerprint}&sni=example.com&path=${encodeURIComponent(作为优选订阅生成器 ? '/' : (config_JSON.随机路径 ? 随机路径(完整节点路径) : 完整节点路径)) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&insecure=1&allowInsecure=1' : ''}#${encodeURIComponent(节点备注)}`;
+                                return `${协议类型}://00000000-0000-4000-8000-000000000000@${节点地址}:${节点端口}?security=tls&type=${传输协议 + ECHLINK参数}&${域名字段名}=example.com&fp=${config_JSON.Fingerprint}&sni=example.com&${路径字段名}=${encodeURIComponent(作为优选订阅生成器 ? '/' : (config_JSON.随机路径 ? 随机路径(完整节点路径) : 完整节点路径)) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&insecure=1&allowInsecure=1' : ''}#${encodeURIComponent(节点备注)}`;
                             }).filter(item => item !== null).join('\n');
                         } else { // 订阅转换
                             const 订阅转换URL = `${config_JSON.订阅转换配置.SUBAPI}/sub?target=${订阅类型}&url=${encodeURIComponent(url.protocol + '//' + url.host + '/sub?target=mixed&token=' + 订阅TOKEN + (url.searchParams.has('sub') && url.searchParams.get('sub') != '' ? `&sub=${url.searchParams.get('sub')}` : ''))}&config=${encodeURIComponent(config_JSON.订阅转换配置.SUBCONFIG)}&emoji=${config_JSON.订阅转换配置.SUBEMOJI}&scv=${config_JSON.跳过证书验证}`;
@@ -384,6 +387,124 @@ export default {
     }
 };
 ///////////////////////////////////////////////////////////////////////XHTTP传输数据///////////////////////////////////////////////
+async function 处理XHTTP请求(request, yourUUID) {
+    if (!request.body) return new Response('Bad Request', { status: 400 });
+    const reader = request.body.getReader();
+    const 首包 = await 读取XHTTP首包(reader, yourUUID);
+    if (!首包) {
+        try { reader.releaseLock(); } catch (e) { }
+        return new Response('Invalid request', { status: 400 });
+    }
+    if (isSpeedTestSite(首包.hostname)) {
+        try { reader.releaseLock(); } catch (e) { }
+        return new Response('Forbidden', { status: 403 });
+    }
+    if (首包.isUDP && 首包.port !== 53) {
+        try { reader.releaseLock(); } catch (e) { }
+        return new Response('UDP is not supported', { status: 400 });
+    }
+
+    const remoteConnWrapper = { socket: null };
+    let 当前写入Socket = null;
+    let 远端写入器 = null;
+    const responseHeaders = new Headers({
+        'Content-Type': 'application/octet-stream',
+        'X-Accel-Buffering': 'no',
+        'Cache-Control': 'no-store'
+    });
+
+    const 释放远端写入器 = () => {
+        if (远端写入器) {
+            try { 远端写入器.releaseLock(); } catch (e) { }
+            远端写入器 = null;
+        }
+        当前写入Socket = null;
+    };
+
+    const 获取远端写入器 = () => {
+        const socket = remoteConnWrapper.socket;
+        if (!socket) return null;
+        if (socket !== 当前写入Socket) {
+            释放远端写入器();
+            当前写入Socket = socket;
+            远端写入器 = socket.writable.getWriter();
+        }
+        return 远端写入器;
+    };
+
+    return new Response(new ReadableStream({
+        async start(controller) {
+            let 已关闭 = false;
+            let udpRespHeader = 首包.respHeader;
+            const xhttpBridge = {
+                readyState: WebSocket.OPEN,
+                send(data) {
+                    if (已关闭) return;
+                    try {
+                        controller.enqueue(XHTTP数据转Uint8Array(data));
+                    } catch (e) {
+                        已关闭 = true;
+                        this.readyState = WebSocket.CLOSED;
+                    }
+                },
+                close() {
+                    if (已关闭) return;
+                    已关闭 = true;
+                    this.readyState = WebSocket.CLOSED;
+                    try { controller.close(); } catch (e) { }
+                }
+            };
+
+            const 写入远端 = async (payload) => {
+                const writer = 获取远端写入器();
+                if (!writer) return;
+                await writer.write(payload);
+            };
+
+            try {
+                if (首包.isUDP) {
+                    if (首包.rawData?.byteLength) {
+                        await forwardataudp(首包.rawData, xhttpBridge, udpRespHeader);
+                        udpRespHeader = null;
+                    }
+                } else {
+                    await forwardataTCP(首包.hostname, 首包.port, 首包.rawData, xhttpBridge, 首包.respHeader, remoteConnWrapper, yourUUID);
+                }
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    if (!value || value.byteLength === 0) continue;
+                    if (首包.isUDP) {
+                        await forwardataudp(value, xhttpBridge, udpRespHeader);
+                        udpRespHeader = null;
+                    } else {
+                        await 写入远端(value);
+                    }
+                }
+
+                if (!首包.isUDP) {
+                    const writer = 获取远端写入器();
+                    if (writer) {
+                        try { await writer.close(); } catch (e) { }
+                    }
+                }
+            } catch (err) {
+                console.log(`[XHTTP转发] 处理失败: ${err?.message || err}`);
+                closeSocketQuietly(xhttpBridge);
+            } finally {
+                释放远端写入器();
+                try { reader.releaseLock(); } catch (e) { }
+            }
+        },
+        cancel() {
+            释放远端写入器();
+            try { remoteConnWrapper.socket?.close(); } catch (e) { }
+            try { reader.releaseLock(); } catch (e) { }
+        }
+    }), { status: 200, headers: responseHeaders });
+}
+
 function XHTTP数据转Uint8Array(data) {
     if (data instanceof Uint8Array) return data;
     if (data instanceof ArrayBuffer) return new Uint8Array(data);
@@ -548,125 +669,6 @@ async function 读取XHTTP首包(reader, token) {
     if (最终VLESS结果.状态 === 'ok') return { ...最终VLESS结果.结果, reader };
     return null;
 }
-
-async function 处理XHTTP请求(request, yourUUID) {
-    if (!request.body) return new Response('Bad Request', { status: 400 });
-    const reader = request.body.getReader();
-    const 首包 = await 读取XHTTP首包(reader, yourUUID);
-    if (!首包) {
-        try { reader.releaseLock(); } catch (e) { }
-        return new Response('Invalid request', { status: 400 });
-    }
-    if (isSpeedTestSite(首包.hostname)) {
-        try { reader.releaseLock(); } catch (e) { }
-        return new Response('Forbidden', { status: 403 });
-    }
-    if (首包.isUDP && 首包.port !== 53) {
-        try { reader.releaseLock(); } catch (e) { }
-        return new Response('UDP is not supported', { status: 400 });
-    }
-
-    const remoteConnWrapper = { socket: null };
-    let 当前写入Socket = null;
-    let 远端写入器 = null;
-    const responseHeaders = new Headers({
-        'Content-Type': 'application/octet-stream',
-        'X-Accel-Buffering': 'no',
-        'Cache-Control': 'no-store'
-    });
-
-    const 释放远端写入器 = () => {
-        if (远端写入器) {
-            try { 远端写入器.releaseLock(); } catch (e) { }
-            远端写入器 = null;
-        }
-        当前写入Socket = null;
-    };
-
-    const 获取远端写入器 = () => {
-        const socket = remoteConnWrapper.socket;
-        if (!socket) return null;
-        if (socket !== 当前写入Socket) {
-            释放远端写入器();
-            当前写入Socket = socket;
-            远端写入器 = socket.writable.getWriter();
-        }
-        return 远端写入器;
-    };
-
-    return new Response(new ReadableStream({
-        async start(controller) {
-            let 已关闭 = false;
-            let udpRespHeader = 首包.respHeader;
-            const xhttpBridge = {
-                readyState: WebSocket.OPEN,
-                send(data) {
-                    if (已关闭) return;
-                    try {
-                        controller.enqueue(XHTTP数据转Uint8Array(data));
-                    } catch (e) {
-                        已关闭 = true;
-                        this.readyState = WebSocket.CLOSED;
-                    }
-                },
-                close() {
-                    if (已关闭) return;
-                    已关闭 = true;
-                    this.readyState = WebSocket.CLOSED;
-                    try { controller.close(); } catch (e) { }
-                }
-            };
-
-            const 写入远端 = async (payload) => {
-                const writer = 获取远端写入器();
-                if (!writer) return;
-                await writer.write(payload);
-            };
-
-            try {
-                if (首包.isUDP) {
-                    if (首包.rawData?.byteLength) {
-                        await forwardataudp(首包.rawData, xhttpBridge, udpRespHeader);
-                        udpRespHeader = null;
-                    }
-                } else {
-                    await forwardataTCP(首包.hostname, 首包.port, 首包.rawData, xhttpBridge, 首包.respHeader, remoteConnWrapper, yourUUID);
-                }
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    if (!value || value.byteLength === 0) continue;
-                    if (首包.isUDP) {
-                        await forwardataudp(value, xhttpBridge, udpRespHeader);
-                        udpRespHeader = null;
-                    } else {
-                        await 写入远端(value);
-                    }
-                }
-
-                if (!首包.isUDP) {
-                    const writer = 获取远端写入器();
-                    if (writer) {
-                        try { await writer.close(); } catch (e) { }
-                    }
-                }
-            } catch (err) {
-                console.log(`[XHTTP转发] 处理失败: ${err?.message || err}`);
-                closeSocketQuietly(xhttpBridge);
-            } finally {
-                释放远端写入器();
-                try { reader.releaseLock(); } catch (e) { }
-            }
-        },
-        cancel() {
-            释放远端写入器();
-            try { remoteConnWrapper.socket?.close(); } catch (e) { }
-            try { reader.releaseLock(); } catch (e) { }
-        }
-    }), { status: 200, headers: responseHeaders });
-}
-
 ///////////////////////////////////////////////////////////////////////gRPC传输数据///////////////////////////////////////////////
 async function 处理gRPC请求(request, yourUUID) {
     if (!request.body) return new Response('Bad Request', { status: 400 });
@@ -1991,6 +1993,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
         PATH: "/",
         协议类型: "v" + "le" + "ss",
         传输协议: "ws",
+        gRPC模式: "gun",
         跳过证书验证: false,
         启用0RTT: false,
         TLS分片: null,
@@ -2081,6 +2084,8 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
 
     if (env.PATH) config_JSON.PATH = env.PATH.startsWith('/') ? env.PATH : '/' + env.PATH;
     else if (!config_JSON.PATH) config_JSON.PATH = '/';
+
+    if (!config_JSON.gRPC模式) config_JSON.gRPC模式 = 'gun';
 
     if (!config_JSON.反代.路径模板?.[_p]) {
         config_JSON.反代.路径模板 = {
