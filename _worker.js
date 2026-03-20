@@ -1986,7 +1986,7 @@ async function getECH(host) {
 async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
     //const host = 随机替换通配符(hostname);
     const _p = atob("UFJPWFlJUA==");
-    const host = hostname, CM_DoH = "https://doh.cmliussss.net/CMLiussss", 占位符 = '{{IP:PORT}}', 初始化开始时间 = performance.now(), 默认配置JSON = {
+    const host = hostname, Ali_DoH = "https://dns.alidns.com/dns-query", ECH_SNI = "cloudflare-ech.com", 占位符 = '{{IP:PORT}}', 初始化开始时间 = performance.now(), 默认配置JSON = {
         TIME: new Date().toISOString(),
         HOST: host,
         HOSTS: [hostname],
@@ -2001,8 +2001,8 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
         随机路径: false,
         ECH: false,
         ECHConfig: {
-            DNS: CM_DoH,
-            SNI: null,
+            DNS: Ali_DoH,
+            SNI: ECH_SNI,
         },
         Fingerprint: "chrome",
         优选订阅生成: {
@@ -2126,7 +2126,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
     const TLS分片参数 = config_JSON.TLS分片 == 'Shadowrocket' ? `&fragment=${encodeURIComponent('1,40-60,30-50,tlshello')}` : config_JSON.TLS分片 == 'Happ' ? `&fragment=${encodeURIComponent('3,1,tlshello')}` : '';
     if (!config_JSON.Fingerprint) config_JSON.Fingerprint = "chrome";
     if (!config_JSON.ECH) config_JSON.ECH = false;
-    if (!config_JSON.ECHConfig) config_JSON.ECHConfig = { DNS: CM_DoH, SNI: null };
+    if (!config_JSON.ECHConfig) config_JSON.ECHConfig = { DNS: Ali_DoH, SNI: ECH_SNI };
     const ECHLINK参数 = config_JSON.ECH ? `&ech=${encodeURIComponent((config_JSON.ECHConfig.SNI ? config_JSON.ECHConfig.SNI + '+' : '') + config_JSON.ECHConfig.DNS)}` : '';
     config_JSON.LINK = `${config_JSON.协议类型}://${userID}@${host}:443?security=tls&type=${config_JSON.传输协议 + ECHLINK参数}&host=${host}&fp=${config_JSON.Fingerprint}&sni=${host}&path=${encodeURIComponent(config_JSON.随机路径 ? 随机路径(config_JSON.完整节点路径) : config_JSON.完整节点路径) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&insecure=1&allowInsecure=1' : ''}#${encodeURIComponent(config_JSON.优选订阅生成.SUBNAME)}`;
     config_JSON.优选订阅生成.TOKEN = await MD5MD5(hostname + userID);
