@@ -522,6 +522,13 @@ function XHTTP数据转Uint8Array(data) {
     return new Uint8Array(data);
 }
 
+function 有效数据长度(data) {
+    if (!data) return 0;
+    if (typeof data.byteLength === 'number') return data.byteLength;
+    if (typeof data.length === 'number') return data.length;
+    return 0;
+}
+
 async function 读取XHTTP首包(reader, token) {
     const decoder = new TextDecoder();
     const 密码哈希 = sha224(token);
@@ -1088,6 +1095,7 @@ function 解析魏烈思请求(chunk, token) {
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID) {
     console.log(`[TCP转发] 目标: ${host}:${portNum} | 反代IP: ${反代IP} | 反代兜底: ${启用反代兜底 ? '是' : '否'} | 反代类型: ${启用SOCKS5反代 || 'proxyip'} | 全局: ${启用SOCKS5全局反代 ? '是' : '否'}`);
     const 连接超时毫秒 = 1000;
+    let 已通过代理发送首包 = false;
 
     async function 等待连接建立(remoteSock, timeoutMs = 连接超时毫秒) {
         await Promise.race([
@@ -1096,7 +1104,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
         ]);
     }
 
-    async function connectDirect(address, port, data, 所有反代数组 = null, 反代兜底 = true) {
+    async function connectDirect(address, port, data = null, 所有反代数组 = null, 反代兜底 = true) {
         let remoteSock;
         if (所有反代数组 && 所有反代数组.length > 0) {
             for (let i = 0; i < 所有反代数组.length; i++) {
@@ -1106,9 +1114,11 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
                     console.log(`[反代连接] 尝试连接到: ${反代地址}:${反代端口} (索引: ${反代数组索引})`);
                     remoteSock = connect({ hostname: 反代地址, port: 反代端口 });
                     await 等待连接建立(remoteSock);
-                    const testWriter = remoteSock.writable.getWriter();
-                    await testWriter.write(data);
-                    testWriter.releaseLock();
+                    if (有效数据长度(data) > 0) {
+                        const testWriter = remoteSock.writable.getWriter();
+                        await testWriter.write(data);
+                        testWriter.releaseLock();
+                    }
                     console.log(`[反代连接] 成功连接到: ${反代地址}:${反代端口}`);
                     缓存反代数组索引 = 反代数组索引;
                     return remoteSock;
@@ -1123,9 +1133,11 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
         if (反代兜底) {
             remoteSock = connect({ hostname: address, port: port });
             await 等待连接建立(remoteSock);
-            const writer = remoteSock.writable.getWriter();
-            await writer.write(data);
-            writer.releaseLock();
+            if (有效数据长度(data) > 0) {
+                const writer = remoteSock.writable.getWriter();
+                await writer.write(data);
+                writer.releaseLock();
+            }
             return remoteSock;
         } else {
             closeSocketQuietly(ws);
@@ -1133,25 +1145,29 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
         }
     }
 
-    async function connecttoPry() {
+    async function connecttoPry(允许发送首包 = true) {
         if (remoteConnWrapper.connectingPromise) {
             await remoteConnWrapper.connectingPromise;
             return;
         }
 
+        const 本次发送首包 = 允许发送首包 && !已通过代理发送首包 && 有效数据长度(rawData) > 0;
+        const 本次首包数据 = 本次发送首包 ? rawData : null;
+
         const 当前连接任务 = (async () => {
             let newSocket;
             if (启用SOCKS5反代 === 'socks5') {
                 console.log(`[SOCKS5代理] 代理到: ${host}:${portNum}`);
-                newSocket = await socks5Connect(host, portNum, rawData);
+                newSocket = await socks5Connect(host, portNum, 本次首包数据);
             } else if (启用SOCKS5反代 === 'http' || 启用SOCKS5反代 === 'https') {
                 console.log(`[HTTP代理] 代理到: ${host}:${portNum}`);
-                newSocket = await httpConnect(host, portNum, rawData);
+                newSocket = await httpConnect(host, portNum, 本次首包数据);
             } else {
                 console.log(`[反代连接] 代理到: ${host}:${portNum}`);
                 const 所有反代数组 = await 解析地址端口(反代IP, host, yourUUID);
-                newSocket = await connectDirect(atob('UFJPWFlJUC50cDEuMDkwMjI3Lnh5eg=='), 1, rawData, 所有反代数组, 启用反代兜底);
+                newSocket = await connectDirect(atob('UFJPWFlJUC50cDEuMDkwMjI3Lnh5eg=='), 1, 本次首包数据, 所有反代数组, 启用反代兜底);
             }
+            if (本次发送首包) 已通过代理发送首包 = true;
             remoteConnWrapper.socket = newSocket;
             newSocket.closed.catch(() => { }).finally(() => closeSocketQuietly(ws));
             connectStreams(newSocket, ws, respHeader, null);
@@ -1166,7 +1182,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
             }
         }
     }
-    remoteConnWrapper.retryConnect = connecttoPry;
+    remoteConnWrapper.retryConnect = async () => connecttoPry(!已通过代理发送首包);
 
     const 验证SOCKS5白名单 = (addr) => SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(addr));
     if (启用SOCKS5反代 && (启用SOCKS5全局反代 || 验证SOCKS5白名单(host))) {
@@ -1337,7 +1353,7 @@ async function socks5Connect(targetHost, targetPort, initialData) {
         response = await reader.read();
         if (response.done || new Uint8Array(response.value)[1] !== 0x00) throw new Error('S5 connection failed');
 
-        await writer.write(initialData);
+        if (有效数据长度(initialData) > 0) await writer.write(initialData);
         writer.releaseLock(); reader.releaseLock();
         return socket;
     } catch (error) {
@@ -1370,7 +1386,7 @@ async function httpConnect(targetHost, targetPort, initialData) {
         const statusCode = parseInt(new TextDecoder().decode(responseBuffer.slice(0, headerEndIndex)).split('\r\n')[0].match(/HTTP\/\d\.\d\s+(\d+)/)[1]);
         if (statusCode < 200 || statusCode >= 300) throw new Error(`Connection failed: HTTP ${statusCode}`);
 
-        await writer.write(initialData);
+        if (有效数据长度(initialData) > 0) await writer.write(initialData);
         writer.releaseLock(); reader.releaseLock();
         return socket;
     } catch (error) {
