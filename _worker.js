@@ -404,7 +404,7 @@ async function 处理XHTTP请求(request, yourUUID) {
         return new Response('UDP is not supported', { status: 400 });
     }
 
-    const remoteConnWrapper = { socket: null };
+    const remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
     let 当前写入Socket = null;
     let 远端写入器 = null;
     const responseHeaders = new Headers({
@@ -455,10 +455,20 @@ async function 处理XHTTP请求(request, yourUUID) {
                 }
             };
 
-            const 写入远端 = async (payload) => {
+            const 写入远端 = async (payload, allowRetry = true) => {
                 const writer = 获取远端写入器();
-                if (!writer) return;
-                await writer.write(payload);
+                if (!writer) return false;
+                try {
+                    await writer.write(payload);
+                    return true;
+                } catch (err) {
+                    释放远端写入器();
+                    if (allowRetry && typeof remoteConnWrapper.retryConnect === 'function') {
+                        await remoteConnWrapper.retryConnect();
+                        return await 写入远端(payload, false);
+                    }
+                    throw err;
+                }
             };
 
             try {
@@ -479,7 +489,7 @@ async function 处理XHTTP请求(request, yourUUID) {
                         await forwardataudp(value, xhttpBridge, udpRespHeader);
                         udpRespHeader = null;
                     } else {
-                        await 写入远端(value);
+                        if (!(await 写入远端(value))) throw new Error('Remote socket is not ready');
                     }
                 }
 
@@ -673,9 +683,11 @@ async function 读取XHTTP首包(reader, token) {
 async function 处理gRPC请求(request, yourUUID) {
     if (!request.body) return new Response('Bad Request', { status: 400 });
     const reader = request.body.getReader();
-    const remoteConnWrapper = { socket: null };
+    const remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
     let isDnsQuery = false;
     let 判断是否是木马 = null;
+    let 当前写入Socket = null;
+    let 远端写入器 = null;
     //console.log('[gRPC] 开始处理双向流');
     const grpcHeaders = new Headers({
         'Content-Type': 'application/grpc',
@@ -758,9 +770,43 @@ async function 处理gRPC请求(request, yourUUID) {
                 已关闭 = true;
                 grpcBridge.readyState = WebSocket.CLOSED;
                 if (刷新定时器) clearTimeout(刷新定时器);
+                if (远端写入器) {
+                    try { 远端写入器.releaseLock(); } catch (e) { }
+                    远端写入器 = null;
+                }
+                当前写入Socket = null;
                 try { reader.releaseLock(); } catch (e) { }
                 try { remoteConnWrapper.socket?.close(); } catch (e) { }
                 try { controller.close(); } catch (e) { }
+            };
+
+            const 释放远端写入器 = () => {
+                if (远端写入器) {
+                    try { 远端写入器.releaseLock(); } catch (e) { }
+                    远端写入器 = null;
+                }
+                当前写入Socket = null;
+            };
+
+            const 写入远端 = async (payload, allowRetry = true) => {
+                const socket = remoteConnWrapper.socket;
+                if (!socket) return false;
+                if (socket !== 当前写入Socket) {
+                    释放远端写入器();
+                    当前写入Socket = socket;
+                    远端写入器 = socket.writable.getWriter();
+                }
+                try {
+                    await 远端写入器.write(payload);
+                    return true;
+                } catch (err) {
+                    释放远端写入器();
+                    if (allowRetry && typeof remoteConnWrapper.retryConnect === 'function') {
+                        await remoteConnWrapper.retryConnect();
+                        return await 写入远端(payload, false);
+                    }
+                    throw err;
+                }
             };
 
             try {
@@ -803,12 +849,7 @@ async function 处理gRPC请求(request, yourUUID) {
                             continue;
                         }
                         if (remoteConnWrapper.socket) {
-                            const writer = remoteConnWrapper.socket.writable.getWriter();
-                            try {
-                                await writer.write(payload);
-                            } finally {
-                                writer.releaseLock();
-                            }
+                            if (!(await 写入远端(payload))) throw new Error('Remote socket is not ready');
                         } else {
                             let 首包buffer;
                             if (payload instanceof ArrayBuffer) 首包buffer = payload;
@@ -846,6 +887,7 @@ async function 处理gRPC请求(request, yourUUID) {
             } catch (err) {
                 console.log(`[gRPC转发] 处理失败: ${err?.message || err}`);
             } finally {
+                释放远端写入器();
                 关闭连接();
             }
         },
