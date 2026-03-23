@@ -862,39 +862,67 @@ async function 处理WS请求(request, yourUUID) {
     const [clientSock, serverSock] = Object.values(wssPair);
     serverSock.accept();// @ts-ignore
     serverSock.binaryType = 'arraybuffer';
-    let remoteConnWrapper = { socket: null };
+    let remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
     let isDnsQuery = false;
     const earlyData = request.headers.get('sec-websocket-protocol') || '';
     const readable = makeReadableStr(serverSock, earlyData);
     let 判断是否是木马 = null;
+    let 当前写入Socket = null;
+    let 远端写入器 = null;
+
+    const 释放远端写入器 = () => {
+        if (远端写入器) {
+            try { 远端写入器.releaseLock(); } catch (e) { }
+            远端写入器 = null;
+        }
+        当前写入Socket = null;
+    };
+
+    const 写入远端 = async (chunk, allowRetry = true) => {
+        const socket = remoteConnWrapper.socket;
+        if (!socket) return false;
+
+        if (socket !== 当前写入Socket) {
+            释放远端写入器();
+            当前写入Socket = socket;
+            远端写入器 = socket.writable.getWriter();
+        }
+
+        try {
+            await 远端写入器.write(chunk);
+            return true;
+        } catch (err) {
+            释放远端写入器();
+            if (allowRetry && typeof remoteConnWrapper.retryConnect === 'function') {
+                await remoteConnWrapper.retryConnect();
+                return await 写入远端(chunk, false);
+            }
+            throw err;
+        }
+    };
+
     readable.pipeTo(new WritableStream({
         async write(chunk) {
             if (isDnsQuery) return await forwardataudp(chunk, serverSock, null);
-            if (remoteConnWrapper.socket) {
-                const writer = remoteConnWrapper.socket.writable.getWriter();
-                await writer.write(chunk);
-                writer.releaseLock();
-                return;
-            }
+            if (await 写入远端(chunk)) return;
 
             if (判断是否是木马 === null) {
                 const bytes = new Uint8Array(chunk);
                 判断是否是木马 = bytes.byteLength >= 58 && bytes[56] === 0x0d && bytes[57] === 0x0a;
             }
 
-            if (remoteConnWrapper.socket) {
-                const writer = remoteConnWrapper.socket.writable.getWriter();
-                await writer.write(chunk);
-                writer.releaseLock();
-                return;
-            }
+            if (await 写入远端(chunk)) return;
 
             if (判断是否是木马) {
-                const { port, hostname, rawClientData } = 解析木马请求(chunk, yourUUID);
+                const 解析结果 = 解析木马请求(chunk, yourUUID);
+                if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid trojan request');
+                const { port, hostname, rawClientData } = 解析结果;
                 if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
                 await forwardataTCP(hostname, port, rawClientData, serverSock, null, remoteConnWrapper, yourUUID);
             } else {
-                const { port, hostname, rawIndex, version, isUDP } = 解析魏烈思请求(chunk, yourUUID);
+                const 解析结果 = 解析魏烈思请求(chunk, yourUUID);
+                if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
+                const { port, hostname, rawIndex, version, isUDP } = 解析结果;
                 if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
                 if (isUDP) {
                     if (port === 53) isDnsQuery = true;
@@ -906,8 +934,15 @@ async function 处理WS请求(request, yourUUID) {
                 await forwardataTCP(hostname, port, rawData, serverSock, respHeader, remoteConnWrapper, yourUUID);
             }
         },
+        close() {
+            释放远端写入器();
+        },
+        abort() {
+            释放远端写入器();
+        }
     })).catch((err) => {
         console.log(`[WS转发] 处理失败: ${err?.message || err}`);
+        释放远端写入器();
     });
 
     return new Response(null, { status: 101, webSocket: clientSock });
@@ -1010,6 +1045,14 @@ function 解析魏烈思请求(chunk, token) {
 
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID) {
     console.log(`[TCP转发] 目标: ${host}:${portNum} | 反代IP: ${反代IP} | 反代兜底: ${启用反代兜底 ? '是' : '否'} | 反代类型: ${启用SOCKS5反代 || 'proxyip'} | 全局: ${启用SOCKS5全局反代 ? '是' : '否'}`);
+    const 连接超时毫秒 = 1000;
+
+    async function 等待连接建立(remoteSock, timeoutMs = 连接超时毫秒) {
+        await Promise.race([
+            remoteSock.opened,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('连接超时')), timeoutMs))
+        ]);
+    }
 
     async function connectDirect(address, port, data, 所有反代数组 = null, 反代兜底 = true) {
         let remoteSock;
@@ -1020,11 +1063,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
                 try {
                     console.log(`[反代连接] 尝试连接到: ${反代地址}:${反代端口} (索引: ${反代数组索引})`);
                     remoteSock = connect({ hostname: 反代地址, port: 反代端口 });
-                    // 等待TCP连接真正建立，设置1秒超时
-                    await Promise.race([
-                        remoteSock.opened,
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('连接超时')), 1000))
-                    ]);
+                    await 等待连接建立(remoteSock);
                     const testWriter = remoteSock.writable.getWriter();
                     await testWriter.write(data);
                     testWriter.releaseLock();
@@ -1041,6 +1080,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 
         if (反代兜底) {
             remoteSock = connect({ hostname: address, port: port });
+            await 等待连接建立(remoteSock);
             const writer = remoteSock.writable.getWriter();
             await writer.write(data);
             writer.releaseLock();
@@ -1052,22 +1092,39 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
     }
 
     async function connecttoPry() {
-        let newSocket;
-        if (启用SOCKS5反代 === 'socks5') {
-            console.log(`[SOCKS5代理] 代理到: ${host}:${portNum}`);
-            newSocket = await socks5Connect(host, portNum, rawData);
-        } else if (启用SOCKS5反代 === 'http' || 启用SOCKS5反代 === 'https') {
-            console.log(`[HTTP代理] 代理到: ${host}:${portNum}`);
-            newSocket = await httpConnect(host, portNum, rawData);
-        } else {
-            console.log(`[反代连接] 代理到: ${host}:${portNum}`);
-            const 所有反代数组 = await 解析地址端口(反代IP, host, yourUUID);
-            newSocket = await connectDirect(atob('UFJPWFlJUC50cDEuMDkwMjI3Lnh5eg=='), 1, rawData, 所有反代数组, 启用反代兜底);
+        if (remoteConnWrapper.connectingPromise) {
+            await remoteConnWrapper.connectingPromise;
+            return;
         }
-        remoteConnWrapper.socket = newSocket;
-        newSocket.closed.catch(() => { }).finally(() => closeSocketQuietly(ws));
-        connectStreams(newSocket, ws, respHeader, null);
+
+        const 当前连接任务 = (async () => {
+            let newSocket;
+            if (启用SOCKS5反代 === 'socks5') {
+                console.log(`[SOCKS5代理] 代理到: ${host}:${portNum}`);
+                newSocket = await socks5Connect(host, portNum, rawData);
+            } else if (启用SOCKS5反代 === 'http' || 启用SOCKS5反代 === 'https') {
+                console.log(`[HTTP代理] 代理到: ${host}:${portNum}`);
+                newSocket = await httpConnect(host, portNum, rawData);
+            } else {
+                console.log(`[反代连接] 代理到: ${host}:${portNum}`);
+                const 所有反代数组 = await 解析地址端口(反代IP, host, yourUUID);
+                newSocket = await connectDirect(atob('UFJPWFlJUC50cDEuMDkwMjI3Lnh5eg=='), 1, rawData, 所有反代数组, 启用反代兜底);
+            }
+            remoteConnWrapper.socket = newSocket;
+            newSocket.closed.catch(() => { }).finally(() => closeSocketQuietly(ws));
+            connectStreams(newSocket, ws, respHeader, null);
+        })();
+
+        remoteConnWrapper.connectingPromise = 当前连接任务;
+        try {
+            await 当前连接任务;
+        } finally {
+            if (remoteConnWrapper.connectingPromise === 当前连接任务) {
+                remoteConnWrapper.connectingPromise = null;
+            }
+        }
     }
+    remoteConnWrapper.retryConnect = connecttoPry;
 
     const 验证SOCKS5白名单 = (addr) => SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(addr));
     if (启用SOCKS5反代 && (启用SOCKS5全局反代 || 验证SOCKS5白名单(host))) {
@@ -1083,7 +1140,10 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
             console.log(`[TCP转发] 尝试直连到: ${host}:${portNum}`);
             const initialSocket = await connectDirect(host, portNum, rawData);
             remoteConnWrapper.socket = initialSocket;
-            connectStreams(initialSocket, ws, respHeader, connecttoPry);
+            connectStreams(initialSocket, ws, respHeader, async () => {
+                if (remoteConnWrapper.socket !== initialSocket) return;
+                await connecttoPry();
+            });
         } catch (err) {
             console.log(`[TCP转发] 直连 ${host}:${portNum} 失败: ${err.message}`);
             await connecttoPry();
