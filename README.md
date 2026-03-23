@@ -137,7 +137,6 @@
    ```url
    /proxyip=proxyip.cmliussss.net
    /?proxyip=proxyip.cmliussss.net
-   /proxyip.cmliussss.net (仅限于域名开头为'proxyip.'的域名)
    ```
 
 - 指定 `SOCKS5` 案例
