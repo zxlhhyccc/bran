@@ -104,6 +104,8 @@ export default {
                             检测代理响应 = await SOCKS5可用性验证('socks5', url.searchParams.get('socks5'));
                         } else if (url.searchParams.has('http')) {
                             检测代理响应 = await SOCKS5可用性验证('http', url.searchParams.get('http'));
+                        } else if (url.searchParams.has('https')) {
+                            检测代理响应 = await SOCKS5可用性验证('https', url.searchParams.get('https'));
                         } else {
                             return new Response(JSON.stringify({ error: '缺少代理参数' }), { status: 400, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
                         }
@@ -1159,9 +1161,12 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
             if (启用SOCKS5反代 === 'socks5') {
                 console.log(`[SOCKS5代理] 代理到: ${host}:${portNum}`);
                 newSocket = await socks5Connect(host, portNum, 本次首包数据);
-            } else if (启用SOCKS5反代 === 'http' || 启用SOCKS5反代 === 'https') {
+            } else if (启用SOCKS5反代 === 'http') {
                 console.log(`[HTTP代理] 代理到: ${host}:${portNum}`);
                 newSocket = await httpConnect(host, portNum, 本次首包数据);
+            } else if (启用SOCKS5反代 === 'https') {
+                console.log(`[HTTPS代理] 代理到: ${host}:${portNum}`);
+                newSocket = await httpConnect(host, portNum, 本次首包数据, true);
             } else {
                 console.log(`[反代连接] 代理到: ${host}:${portNum}`);
                 const 所有反代数组 = await 解析地址端口(反代IP, host, yourUUID);
@@ -1186,11 +1191,11 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 
     const 验证SOCKS5白名单 = (addr) => SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(addr));
     if (启用SOCKS5反代 && (启用SOCKS5全局反代 || 验证SOCKS5白名单(host))) {
-        console.log(`[TCP转发] 启用 SOCKS5/HTTP 全局代理`);
+        console.log(`[TCP转发] 启用 SOCKS5/HTTP/HTTPS 全局代理`);
         try {
             await connecttoPry();
         } catch (err) {
-            console.log(`[TCP转发] SOCKS5/HTTP 代理连接失败: ${err.message}`);
+            console.log(`[TCP转发] SOCKS5/HTTP/HTTPS 代理连接失败: ${err.message}`);
             throw err;
         }
     } else {
@@ -1364,30 +1369,55 @@ async function socks5Connect(targetHost, targetPort, initialData) {
     }
 }
 
-async function httpConnect(targetHost, targetPort, initialData) {
+async function httpConnect(targetHost, targetPort, initialData, HTTPS代理 = false) {
     const { username, password, hostname, port } = parsedSocks5Address;
-    const socket = connect({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
+    const socket = HTTPS代理
+        ? connect({ hostname, port }, { secureTransport: 'on', allowHalfOpen: false })
+        : connect({ hostname, port });
+    const writer = socket.writable.getWriter(), reader = socket.readable.getReader();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
     try {
+        if (HTTPS代理) await socket.opened;
+
         const auth = username && password ? `Proxy-Authorization: Basic ${btoa(`${username}:${password}`)}\r\n` : '';
         const request = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n${auth}User-Agent: Mozilla/5.0\r\nConnection: keep-alive\r\n\r\n`;
-        await writer.write(new TextEncoder().encode(request));
+        await writer.write(encoder.encode(request));
+        writer.releaseLock();
 
         let responseBuffer = new Uint8Array(0), headerEndIndex = -1, bytesRead = 0;
         while (headerEndIndex === -1 && bytesRead < 8192) {
             const { done, value } = await reader.read();
-            if (done) throw new Error('Connection closed before receiving HTTP response');
+            if (done || !value) throw new Error(`${HTTPS代理 ? 'HTTPS' : 'HTTP'} 代理在返回 CONNECT 响应前关闭连接`);
             responseBuffer = new Uint8Array([...responseBuffer, ...value]);
             bytesRead = responseBuffer.length;
             const crlfcrlf = responseBuffer.findIndex((_, i) => i < responseBuffer.length - 3 && responseBuffer[i] === 0x0d && responseBuffer[i + 1] === 0x0a && responseBuffer[i + 2] === 0x0d && responseBuffer[i + 3] === 0x0a);
             if (crlfcrlf !== -1) headerEndIndex = crlfcrlf + 4;
         }
 
-        if (headerEndIndex === -1) throw new Error('Invalid HTTP response');
-        const statusCode = parseInt(new TextDecoder().decode(responseBuffer.slice(0, headerEndIndex)).split('\r\n')[0].match(/HTTP\/\d\.\d\s+(\d+)/)[1]);
-        if (statusCode < 200 || statusCode >= 300) throw new Error(`Connection failed: HTTP ${statusCode}`);
+        if (headerEndIndex === -1) throw new Error('代理 CONNECT 响应头过长或无效');
+        const statusMatch = decoder.decode(responseBuffer.slice(0, headerEndIndex)).split('\r\n')[0].match(/HTTP\/\d\.\d\s+(\d+)/);
+        const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : NaN;
+        if (!Number.isFinite(statusCode) || statusCode < 200 || statusCode >= 300) throw new Error(`Connection failed: HTTP ${statusCode}`);
 
-        if (有效数据长度(initialData) > 0) await writer.write(initialData);
-        writer.releaseLock(); reader.releaseLock();
+        reader.releaseLock();
+
+        if (有效数据长度(initialData) > 0) {
+            const 远端写入器 = socket.writable.getWriter();
+            await 远端写入器.write(initialData);
+            远端写入器.releaseLock();
+        }
+
+        // CONNECT 响应头后可能夹带隧道数据，先回灌到可读流，避免首包被吞。
+        if (bytesRead > headerEndIndex) {
+            const { readable, writable } = new TransformStream();
+            const transformWriter = writable.getWriter();
+            await transformWriter.write(responseBuffer.subarray(headerEndIndex, bytesRead));
+            transformWriter.releaseLock();
+            socket.readable.pipeTo(writable).catch(() => { });
+            return { readable, writable: socket.writable, closed: socket.closed, close: () => socket.close() };
+        }
+
         return socket;
     } catch (error) {
         try { writer.releaseLock(); } catch (e) { }
@@ -2610,11 +2640,14 @@ async function 反代参数获取(request) {
     const pathname = decodeURIComponent(url.pathname);
     const pathLower = pathname.toLowerCase();
 
-    我的SOCKS5账号 = searchParams.get('socks5') || searchParams.get('http') || null;
+    我的SOCKS5账号 = searchParams.get('socks5') || searchParams.get('http') || searchParams.get('https') || null;
     启用SOCKS5全局反代 = searchParams.has('globalproxy');
+    if (searchParams.get('socks5')) 启用SOCKS5反代 = 'socks5';
+    else if (searchParams.get('http')) 启用SOCKS5反代 = 'http';
+    else if (searchParams.get('https')) 启用SOCKS5反代 = 'https';
 
     const 解析代理URL = (值, 强制全局 = true) => {
-        const 匹配 = /^(socks5|http):\/\/(.+)$/i.exec(值 || '');
+        const 匹配 = /^(socks5|http|https):\/\/(.+)$/i.exec(值 || '');
         if (!匹配) return false;
         启用SOCKS5反代 = 匹配[1].toLowerCase();
         我的SOCKS5账号 = 匹配[2].split('/')[0];
@@ -2642,15 +2675,16 @@ async function 反代参数获取(request) {
     if (查询反代IP !== null) {
         if (!解析代理URL(查询反代IP)) return 设置反代IP(查询反代IP);
     } else {
-        let 匹配 = /\/(socks5?|http):\/?\/?([^/?#\s]+)/i.exec(pathname);
+        let 匹配 = /\/(socks5?|http|https):\/?\/?([^/?#\s]+)/i.exec(pathname);
         if (匹配) {
-            启用SOCKS5反代 = 匹配[1].toLowerCase() === 'http' ? 'http' : 'socks5';
+            const 类型 = 匹配[1].toLowerCase();
+            启用SOCKS5反代 = 类型 === 'http' ? 'http' : (类型 === 'https' ? 'https' : 'socks5');
             我的SOCKS5账号 = 匹配[2].split('/')[0];
             启用SOCKS5全局反代 = true;
-        } else if ((匹配 = /\/(g?s5|socks5|g?http)=([^/?#\s]+)/i.exec(pathname))) {
+        } else if ((匹配 = /\/(g?s5|socks5|g?http|g?https)=([^/?#\s]+)/i.exec(pathname))) {
             const 类型 = 匹配[1].toLowerCase();
             我的SOCKS5账号 = 匹配[2].split('/')[0];
-            启用SOCKS5反代 = 类型.includes('http') ? 'http' : 'socks5';
+            启用SOCKS5反代 = 类型.includes('https') ? 'https' : (类型.includes('http') ? 'http' : 'socks5');
             if (类型.startsWith('g')) 启用SOCKS5全局反代 = true;
         } else if ((匹配 = /\/(proxyip[.=]|pyip=|ip=)([^?#\s]+)/.exec(pathLower))) {
             const 路径反代值 = 提取路径值(匹配[2]);
@@ -2664,8 +2698,11 @@ async function 反代参数获取(request) {
     }
 
     try {
-        parsedSocks5Address = await 获取SOCKS5账号(我的SOCKS5账号);
-        启用SOCKS5反代 = searchParams.get('http') ? 'http' : (启用SOCKS5反代 || 'socks5');
+        parsedSocks5Address = await 获取SOCKS5账号(我的SOCKS5账号, 启用SOCKS5反代 === 'https' ? 443 : 80);
+        if (searchParams.get('socks5')) 启用SOCKS5反代 = 'socks5';
+        else if (searchParams.get('http')) 启用SOCKS5反代 = 'http';
+        else if (searchParams.get('https')) 启用SOCKS5反代 = 'https';
+        else 启用SOCKS5反代 = 启用SOCKS5反代 || 'socks5';
     } catch (err) {
         console.error('解析SOCKS5地址失败:', err.message);
         启用SOCKS5反代 = null;
@@ -2673,7 +2710,7 @@ async function 反代参数获取(request) {
 }
 
 const SOCKS5账号Base64正则 = /^(?:[A-Z0-9+/]{4})*(?:[A-Z0-9+/]{2}==|[A-Z0-9+/]{3}=)?$/i, IPv6方括号正则 = /^\[.*\]$/;
-function 获取SOCKS5账号(address) {
+function 获取SOCKS5账号(address, 默认端口 = 80) {
     const firstAt = address.lastIndexOf("@");
     if (firstAt !== -1) {
         let auth = address.slice(0, firstAt).replaceAll("%3D", "=");
@@ -2687,7 +2724,7 @@ function 获取SOCKS5账号(address) {
     const [username, password] = authPart ? authPart.split(":") : [];
     if (authPart && !password) throw new Error('无效的 SOCKS 地址格式：认证部分必须是 "username:password" 的形式');
 
-    let hostname = hostPart, port = 80;
+    let hostname = hostPart, port = 默认端口;
     if (hostPart.includes("]:")) {
         const [ipv6Host, ipv6Port = ""] = hostPart.split("]:");
         hostname = ipv6Host + "]";
@@ -2896,12 +2933,16 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 
 async function SOCKS5可用性验证(代理协议 = 'socks5', 代理参数) {
     const startTime = Date.now();
-    try { parsedSocks5Address = await 获取SOCKS5账号(代理参数); } catch (err) { return { success: false, error: err.message, proxy: 代理协议 + "://" + 代理参数, responseTime: Date.now() - startTime }; }
+    try { parsedSocks5Address = await 获取SOCKS5账号(代理参数, 代理协议 === 'https' ? 443 : 80); } catch (err) { return { success: false, error: err.message, proxy: 代理协议 + "://" + 代理参数, responseTime: Date.now() - startTime }; }
     const { username, password, hostname, port } = parsedSocks5Address;
     const 完整代理参数 = username && password ? `${username}:${password}@${hostname}:${port}` : `${hostname}:${port}`;
     try {
         const initialData = new Uint8Array(0);
-        const tcpSocket = 代理协议 == 'socks5' ? await socks5Connect('check.socks5.090227.xyz', 80, initialData) : await httpConnect('check.socks5.090227.xyz', 80, initialData);
+        const tcpSocket = 代理协议 === 'socks5'
+            ? await socks5Connect('check.socks5.090227.xyz', 80, initialData)
+            : (代理协议 === 'https'
+                ? await httpConnect('check.socks5.090227.xyz', 80, initialData, true)
+                : await httpConnect('check.socks5.090227.xyz', 80, initialData));
         if (!tcpSocket) return { success: false, error: '无法连接到代理服务器', proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime };
         try {
             const writer = tcpSocket.writable.getWriter(), encoder = new TextEncoder();
