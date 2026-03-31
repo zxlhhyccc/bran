@@ -331,8 +331,9 @@ export default {
 								if (isLoonOrSurge) 完整节点路径 = 完整节点路径.replace(/,/g, '%2C');
 
 								if (协议类型 === 'ss') {
-									完整节点路径 = 完整节点路径.includes('?') ? (完整节点路径 + '&enc=' + config_JSON.SS.加密方式) : (完整节点路径 + '?enc=' + config_JSON.SS.加密方式);
-									return `ss://${btoa(config_JSON.SS.加密方式 + ':')}MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAw@${节点地址}:${节点端口}?plugin=${encodeURIComponent(`v2ray-plugin;mode=websocket;host=example.com;path=${完整节点路径.replace(/([=,])/g, '\\$1') + (config_JSON.SS.TLS ? ';tls' : '')};mux=0`)}#${encodeURIComponent(节点备注)}`;
+									完整节点路径 = 完整节点路径.includes('?') ? 完整节点路径.replace('?', '?enc=' + config_JSON.SS.加密方式 + '&') : (完整节点路径 + '?enc=' + config_JSON.SS.加密方式);
+									//if (!isSubConverterRequest) 完整节点路径 = 完整节点路径.replace(/([=,])/g, '\\$1');
+									return `ss://${btoa(config_JSON.SS.加密方式 + ':')}MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAw@${节点地址}:${节点端口}?plugin=${encodeURIComponent(`v2ray-plugin;mode=websocket;host=example.com;path=${完整节点路径 + (config_JSON.SS.TLS ? ';tls' : '')}`)}#${encodeURIComponent(节点备注)}`;
 								} else return `${协议类型}://00000000-0000-4000-8000-000000000000@${节点地址}:${节点端口}?security=tls&type=${传输协议 + ECHLINK参数}&${域名字段名}=example.com&fp=${config_JSON.Fingerprint}&sni=example.com&${路径字段名}=${encodeURIComponent(作为优选订阅生成器 ? '/' : (config_JSON.随机路径 ? 随机路径(完整节点路径) : 完整节点路径)) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&insecure=1&allowInsecure=1' : ''}#${encodeURIComponent(节点备注)}`;
 							}).filter(item => item !== null).join('\n');
 						} else { // 订阅转换
