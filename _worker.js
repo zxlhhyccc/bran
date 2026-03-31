@@ -346,10 +346,10 @@ export default {
 						if (订阅类型 === 'mixed' && (!ua.includes('mozilla') || url.searchParams.has('b64') || url.searchParams.has('base64'))) 订阅内容 = btoa(订阅内容);
 
 						if (订阅类型 === 'singbox') {
-							订阅内容 = Singbox订阅配置文件热补丁(订阅内容, config_JSON.UUID, config_JSON.Fingerprint, config_JSON.ECH ? await getECH(config_JSON.ECHConfig.SNI || host) : null);
+							订阅内容 = await Singbox订阅配置文件热补丁(订阅内容, config_JSON);
 							responseHeaders["content-type"] = 'application/json; charset=utf-8';
 						} else if (订阅类型 === 'clash') {
-							订阅内容 = Clash订阅配置文件热补丁(订阅内容, config_JSON.UUID, config_JSON.ECH, config_JSON.HOSTS, config_JSON.ECHConfig.SNI, config_JSON.ECHConfig.DNS);
+							订阅内容 = Clash订阅配置文件热补丁(订阅内容, config_JSON);
 							responseHeaders["content-type"] = 'application/x-yaml; charset=utf-8';
 						}
 						return new Response(订阅内容, { status: 200, headers: responseHeaders });
@@ -1427,7 +1427,12 @@ async function httpConnect(targetHost, targetPort, initialData, HTTPS代理 = fa
 	}
 }
 //////////////////////////////////////////////////功能性函数///////////////////////////////////////////////
-function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null, ECH启用 = false, HOSTS = [], ECH_SNI = null, ECH_DNS) {
+function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON = {}) {
+	const uuid = config_JSON?.UUID || null;
+	const ECH启用 = Boolean(config_JSON?.ECH);
+	const HOSTS = Array.isArray(config_JSON?.HOSTS) ? [...config_JSON.HOSTS] : [];
+	const ECH_SNI = config_JSON?.ECHConfig?.SNI || null;
+	const ECH_DNS = config_JSON?.ECHConfig?.DNS;
 	let clash_yaml = Clash_原始订阅内容.replace(/mode:\s*Rule\b/g, 'mode: rule');
 
 	// 基础 DNS 配置块（不含 nameserver-policy）
@@ -1647,7 +1652,11 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, uuid = null,
 	return processedLines.join('\n');
 }
 
-function Singbox订阅配置文件热补丁(SingBox_原始订阅内容, uuid = null, fingerprint = "chrome", ech_config = null) {
+async function Singbox订阅配置文件热补丁(SingBox_原始订阅内容, config_JSON = {}) {
+	const uuid = config_JSON?.UUID || null;
+	const fingerprint = config_JSON?.Fingerprint || "chrome";
+	const ECH_SNI = config_JSON?.ECHConfig?.SNI || config_JSON?.HOST || null;
+	const ech_config = config_JSON?.ECH && ECH_SNI ? await getECH(ECH_SNI) : null;
 	const sb_json_text = SingBox_原始订阅内容.replace('1.1.1.1', '8.8.8.8').replace('1.0.0.1', '8.8.4.4');
 	try {
 		let config = JSON.parse(sb_json_text);
