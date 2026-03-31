@@ -112,11 +112,11 @@ export default {
 						return new Response(JSON.stringify(检测代理响应, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
 					}
 
-					config_JSON = await 读取config_JSON(env, host, userID);
+					config_JSON = await 读取config_JSON(env, host, userID, UA);
 
 					if (访问路径 === 'admin/init') {// 重置配置为默认值
 						try {
-							config_JSON = await 读取config_JSON(env, host, userID, true);
+							config_JSON = await 读取config_JSON(env, host, userID, UA, true);
 							ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Init_Config', config_JSON));
 							config_JSON.init = '配置已重置为默认值';
 							return new Response(JSON.stringify(config_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
@@ -211,7 +211,7 @@ export default {
 				} else if (访问路径 === 'sub') {//处理订阅请求
 					const 订阅TOKEN = await MD5MD5(host + userID), 作为优选订阅生成器 = ['1', 'true'].includes(env.BEST_SUB) && url.searchParams.get('host') === 'example.com' && url.searchParams.get('uuid') === '00000000-0000-4000-8000-000000000000' && UA.toLowerCase().includes('tunnel (https://github.com/cmliu/edge');
 					if (url.searchParams.get('token') === 订阅TOKEN || 作为优选订阅生成器) {
-						config_JSON = await 读取config_JSON(env, host, userID);
+						config_JSON = await 读取config_JSON(env, host, userID, UA);
 						if (作为优选订阅生成器) ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Get_Best_SUB', config_JSON, false));
 						else ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Get_SUB', config_JSON));
 						const ua = UA.toLowerCase();
@@ -1439,7 +1439,6 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 	const gRPCUserAgentYAML = gRPCUserAgent ? JSON.stringify(gRPCUserAgent) : null;
 	let clash_yaml = Clash_原始订阅内容.replace(/mode:\s*Rule\b/g, 'mode: rule');
 
-	// 基础 DNS 配置块（不含 nameserver-policy）
 	const baseDnsBlock = `dns:
   enable: true
   default-nameserver:
@@ -1466,87 +1465,51 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
       - '+.youtube.com'
 `;
 
-	// 检查是否存在 dns: 字段（可能在任意行，行首无缩进）
-	const hasDns = /^dns:\s*(?:\n|$)/m.test(clash_yaml);
-
-	// 无论 ECH 是否启用，都确保存在 dns: 配置块
-	if (!hasDns) {
-		clash_yaml = baseDnsBlock + clash_yaml;
-	}
-
-	// 如果 ECH_SNI 存在，添加到 HOSTS 数组中
-	if (ECH_SNI && !HOSTS.includes(ECH_SNI)) HOSTS.push(ECH_SNI);
-
-	// 如果 ECH 启用且 HOSTS 有效，添加 nameserver-policy
-	if (ECH启用 && HOSTS.length > 0) {
-		// 生成 HOSTS 的 nameserver-policy 条目
-		const hostsEntries = HOSTS.map(host => `    "${host}":${ECH_DNS ? `\n      - ${ECH_DNS}` : ''}\n      - https://doh.cm.edu.kg/CMLiussss`).join('\n');
-
-		// 检查是否存在 nameserver-policy:
-		const hasNameserverPolicy = /^\s{2}nameserver-policy:\s*(?:\n|$)/m.test(clash_yaml);
-
-		if (hasNameserverPolicy) {
-			// 存在 nameserver-policy:，在其后添加 HOSTS 条目
-			clash_yaml = clash_yaml.replace(
-				/^(\s{2}nameserver-policy:\s*\n)/m,
-				`$1${hostsEntries}\n`
-			);
-		} else {
-			// 不存在 nameserver-policy:，需要在 dns: 块内添加整个 nameserver-policy
-			const lines = clash_yaml.split('\n');
-			let dnsBlockEndIndex = -1;
-			let inDnsBlock = false;
-
-			for (let i = 0; i < lines.length; i++) {
-				const line = lines[i];
-				if (/^dns:\s*$/.test(line)) {
-					inDnsBlock = true;
-					continue;
-				}
-				if (inDnsBlock) {
-					// 检查是否是新的顶级字段（行首无空格且不是空行且不是注释）
-					if (/^[a-zA-Z]/.test(line)) {
-						dnsBlockEndIndex = i;
-						break;
-					}
-				}
-			}
-
-			// 在 dns 块末尾插入 nameserver-policy
-			const nameserverPolicyBlock = `  nameserver-policy:\n${hostsEntries}`;
-			if (dnsBlockEndIndex !== -1) {
-				lines.splice(dnsBlockEndIndex, 0, nameserverPolicyBlock);
-			} else {
-				// dns: 是最后一个顶级块，在文件末尾添加
-				lines.push(nameserverPolicyBlock);
-			}
-			clash_yaml = lines.join('\n');
-		}
-	}
-
-	// 无需做节点热补丁时，直接返回
-	if (!需要处理ECH && !需要处理gRPC) return clash_yaml;
-
+	const 添加InlineGrpcUserAgent = (text) => text.replace(/grpc-opts:\s*\{([\s\S]*?)\}/i, (all, inner) => {
+		if (/grpc-user-agent\s*:/i.test(inner)) return all;
+		let content = inner.trim();
+		if (content.endsWith(',')) content = content.slice(0, -1).trim();
+		const patchedContent = content ? `${content}, grpc-user-agent: ${gRPCUserAgentYAML}` : `grpc-user-agent: ${gRPCUserAgentYAML}`;
+		return `grpc-opts: {${patchedContent}}`;
+	});
 	const 匹配到gRPC网络 = (text) => /(?:^|[,{])\s*network:\s*(?:"grpc"|'grpc'|grpc)(?=\s*(?:[,}\n#]|$))/mi.test(text);
-
+	const 获取代理类型 = (nodeText) => nodeText.match(/type:\s*(\w+)/)?.[1] || 'vl' + 'ess';
+	const 获取凭据值 = (nodeText, isFlowStyle) => {
+		const credentialField = 获取代理类型(nodeText) === 'trojan' ? 'password' : 'uuid';
+		const pattern = new RegExp(`${credentialField}:\\s*${isFlowStyle ? '([^,}\\n]+)' : '([^\\n]+)'}`);
+		return nodeText.match(pattern)?.[1]?.trim() || null;
+	};
+	const 插入NameserverPolicy = (yaml, hostsEntries) => {
+		if (/^\s{2}nameserver-policy:\s*(?:\n|$)/m.test(yaml)) {
+			return yaml.replace(/^(\s{2}nameserver-policy:\s*\n)/m, `$1${hostsEntries}\n`);
+		}
+		const lines = yaml.split('\n');
+		let dnsBlockEndIndex = -1;
+		let inDnsBlock = false;
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			if (/^dns:\s*$/.test(line)) {
+				inDnsBlock = true;
+				continue;
+			}
+			if (inDnsBlock && /^[a-zA-Z]/.test(line)) {
+				dnsBlockEndIndex = i;
+				break;
+			}
+		}
+		const nameserverPolicyBlock = `  nameserver-policy:\n${hostsEntries}`;
+		if (dnsBlockEndIndex !== -1) lines.splice(dnsBlockEndIndex, 0, nameserverPolicyBlock);
+		else lines.push(nameserverPolicyBlock);
+		return lines.join('\n');
+	};
 	const 添加Flow格式gRPCUserAgent = (nodeText) => {
 		if (!匹配到gRPC网络(nodeText) || /grpc-user-agent\s*:/i.test(nodeText)) return nodeText;
-		if (/grpc-opts:\s*\{/i.test(nodeText)) {
-			return nodeText.replace(/grpc-opts:\s*\{([\s\S]*?)\}/i, (all, inner) => {
-				if (/grpc-user-agent\s*:/i.test(inner)) return all;
-				let content = inner.trim();
-				if (content.endsWith(',')) content = content.slice(0, -1).trim();
-				const patchedContent = content ? `${content}, grpc-user-agent: ${gRPCUserAgentYAML}` : `grpc-user-agent: ${gRPCUserAgentYAML}`;
-				return `grpc-opts: {${patchedContent}}`;
-			});
-		}
+		if (/grpc-opts:\s*\{/i.test(nodeText)) return 添加InlineGrpcUserAgent(nodeText);
 		return nodeText.replace(/\}(\s*)$/, `, grpc-opts: {grpc-user-agent: ${gRPCUserAgentYAML}}}$1`);
 	};
-
 	const 添加Block格式gRPCUserAgent = (nodeLines, topLevelIndent) => {
 		const 顶级缩进 = ' '.repeat(topLevelIndent);
 		let grpcOptsIndex = -1;
-
 		for (let idx = 0; idx < nodeLines.length; idx++) {
 			const line = nodeLines[idx];
 			if (!line.trim()) continue;
@@ -1557,7 +1520,6 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 				break;
 			}
 		}
-
 		if (grpcOptsIndex === -1) {
 			let insertIndex = -1;
 			for (let j = nodeLines.length - 1; j >= 0; j--) {
@@ -1566,29 +1528,17 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 					break;
 				}
 			}
-			if (insertIndex >= 0) {
-				nodeLines.splice(insertIndex + 1, 0, `${顶级缩进}grpc-opts:`, `${顶级缩进}  grpc-user-agent: ${gRPCUserAgentYAML}`);
-			}
+			if (insertIndex >= 0) nodeLines.splice(insertIndex + 1, 0, `${顶级缩进}grpc-opts:`, `${顶级缩进}  grpc-user-agent: ${gRPCUserAgentYAML}`);
 			return nodeLines;
 		}
-
 		const grpcLine = nodeLines[grpcOptsIndex];
 		if (/^\s*grpc-opts:\s*\{.*\}\s*(?:#.*)?$/.test(grpcLine)) {
-			if (/grpc-user-agent\s*:/i.test(grpcLine)) return nodeLines;
-			nodeLines[grpcOptsIndex] = grpcLine.replace(/grpc-opts:\s*\{([\s\S]*?)\}/i, (all, inner) => {
-				if (/grpc-user-agent\s*:/i.test(inner)) return all;
-				let content = inner.trim();
-				if (content.endsWith(',')) content = content.slice(0, -1).trim();
-				const patchedContent = content ? `${content}, grpc-user-agent: ${gRPCUserAgentYAML}` : `grpc-user-agent: ${gRPCUserAgentYAML}`;
-				return `grpc-opts: {${patchedContent}}`;
-			});
+			if (!/grpc-user-agent\s*:/i.test(grpcLine)) nodeLines[grpcOptsIndex] = 添加InlineGrpcUserAgent(grpcLine);
 			return nodeLines;
 		}
-
 		let blockEndIndex = nodeLines.length;
 		let 子级缩进 = topLevelIndent + 2;
 		let 已有gRPCUserAgent = false;
-
 		for (let idx = grpcOptsIndex + 1; idx < nodeLines.length; idx++) {
 			const line = nodeLines[idx];
 			const trimmed = line.trim();
@@ -1604,14 +1554,35 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 				break;
 			}
 		}
-
-		if (!已有gRPCUserAgent) {
-			nodeLines.splice(blockEndIndex, 0, `${' '.repeat(子级缩进)}grpc-user-agent: ${gRPCUserAgentYAML}`);
+		if (!已有gRPCUserAgent) nodeLines.splice(blockEndIndex, 0, `${' '.repeat(子级缩进)}grpc-user-agent: ${gRPCUserAgentYAML}`);
+		return nodeLines;
+	};
+	const 添加Block格式ECHOpts = (nodeLines, topLevelIndent) => {
+		let insertIndex = -1;
+		for (let j = nodeLines.length - 1; j >= 0; j--) {
+			if (nodeLines[j].trim()) {
+				insertIndex = j;
+				break;
+			}
 		}
+		if (insertIndex < 0) return nodeLines;
+		const indent = ' '.repeat(topLevelIndent);
+		const echOptsLines = [`${indent}ech-opts:`, `${indent}  enable: true`];
+		if (ECH_SNI) echOptsLines.push(`${indent}  query-server-name: ${ECH_SNI}`);
+		nodeLines.splice(insertIndex + 1, 0, ...echOptsLines);
 		return nodeLines;
 	};
 
-	// ECH 启用时，处理代理节点添加 ech-opts
+	if (!/^dns:\s*(?:\n|$)/m.test(clash_yaml)) clash_yaml = baseDnsBlock + clash_yaml;
+	if (ECH_SNI && !HOSTS.includes(ECH_SNI)) HOSTS.push(ECH_SNI);
+
+	if (ECH启用 && HOSTS.length > 0) {
+		const hostsEntries = HOSTS.map(host => `    "${host}":${ECH_DNS ? `\n      - ${ECH_DNS}` : ''}\n      - https://doh.cm.edu.kg/CMLiussss`).join('\n');
+		clash_yaml = 插入NameserverPolicy(clash_yaml, hostsEntries);
+	}
+
+	if (!需要处理ECH && !需要处理gRPC) return clash_yaml;
+
 	const lines = clash_yaml.split('\n');
 	const processedLines = [];
 	let i = 0;
@@ -1620,128 +1591,49 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 		const line = lines[i];
 		const trimmedLine = line.trim();
 
-		// 处理行格式（Flow）：- {name: ..., uuid: ..., ...}
 		if (trimmedLine.startsWith('- {')) {
 			let fullNode = line;
 			let braceCount = (line.match(/\{/g) || []).length - (line.match(/\}/g) || []).length;
-
-			// 如果括号不匹配，继续读取下一行
 			while (braceCount > 0 && i + 1 < lines.length) {
 				i++;
 				fullNode += '\n' + lines[i];
 				braceCount += (lines[i].match(/\{/g) || []).length - (lines[i].match(/\}/g) || []).length;
 			}
-
-			// gRPC 传输节点补充 grpc-user-agent
-			if (需要处理gRPC) {
-				fullNode = 添加Flow格式gRPCUserAgent(fullNode);
-			}
-
-			// 获取代理类型
-			const typeMatch = fullNode.match(/type:\s*(\w+)/);
-			const proxyType = typeMatch ? typeMatch[1] : 'vl' + 'ess';
-
-			// 根据代理类型确定要查找的字段
-			let credentialField = 'uuid';
-			if (proxyType === 'trojan') {
-				credentialField = 'password';
-			}
-
-			// 检查对应字段的值是否匹配
-			const credentialPattern = new RegExp(`${credentialField}:\\s*([^,}\\n]+)`);
-			const credentialMatch = fullNode.match(credentialPattern);
-
-			if (需要处理ECH && credentialMatch && credentialMatch[1].trim() === uuid.trim()) {
-				// 在最后一个}前添加ech-opts
+			if (需要处理gRPC) fullNode = 添加Flow格式gRPCUserAgent(fullNode);
+			if (需要处理ECH && 获取凭据值(fullNode, true) === uuid.trim()) {
 				fullNode = fullNode.replace(/\}(\s*)$/, `, ech-opts: {enable: true${ECH_SNI ? `, query-server-name: ${ECH_SNI}` : ''}}}$1`);
 			}
-
 			processedLines.push(fullNode);
 			i++;
-		}
-		// 处理块格式（Block）：- name: ..., 后续行为属性
-		else if (trimmedLine.startsWith('- name:')) {
-			// 收集完整的代理节点定义
+		} else if (trimmedLine.startsWith('- name:')) {
 			let nodeLines = [line];
 			let baseIndent = line.search(/\S/);
-			let topLevelIndent = baseIndent + 2; // 顶级属性的缩进
+			let topLevelIndent = baseIndent + 2;
 			i++;
-
-			// 继续读取这个节点的所有属性
 			while (i < lines.length) {
 				const nextLine = lines[i];
 				const nextTrimmed = nextLine.trim();
-
-				// 如果是空行，包含它但不继续
 				if (!nextTrimmed) {
 					nodeLines.push(nextLine);
 					i++;
 					break;
 				}
-
 				const nextIndent = nextLine.search(/\S/);
-
-				// 如果缩进小于等于基础缩进且不是空行，说明节点结束了
 				if (nextIndent <= baseIndent && nextTrimmed.startsWith('- ')) {
 					break;
 				}
-
-				// 如果缩进更小，节点也结束了
 				if (nextIndent < baseIndent && nextTrimmed) {
 					break;
 				}
-
 				nodeLines.push(nextLine);
 				i++;
 			}
-
-			// 获取代理类型
 			let nodeText = nodeLines.join('\n');
-
-			// gRPC 传输节点补充 grpc-user-agent
 			if (需要处理gRPC && 匹配到gRPC网络(nodeText)) {
 				nodeLines = 添加Block格式gRPCUserAgent(nodeLines, topLevelIndent);
 				nodeText = nodeLines.join('\n');
 			}
-
-			const typeMatch = nodeText.match(/type:\s*(\w+)/);
-			const proxyType = typeMatch ? typeMatch[1] : 'vl' + 'ess';
-
-			// 根据代理类型确定要查找的字段
-			let credentialField = 'uuid';
-			if (proxyType === 'trojan') {
-				credentialField = 'password';
-			}
-
-			// 检查这个节点的对应字段是否匹配
-			const credentialPattern = new RegExp(`${credentialField}:\\s*([^\\n]+)`);
-			const credentialMatch = nodeText.match(credentialPattern);
-
-			if (需要处理ECH && credentialMatch && credentialMatch[1].trim() === uuid.trim()) {
-				// 找到在哪里插入ech-opts
-				// 策略：在最后一个顶级属性后面插入，或在ws-opts之前插入
-				let insertIndex = -1;
-
-				for (let j = nodeLines.length - 1; j >= 0; j--) {
-					// 跳过空行，找到节点中最后一个非空行（可能是顶级属性或其子项）
-					if (nodeLines[j].trim()) {
-						insertIndex = j;
-						break;
-					}
-				}
-
-				if (insertIndex >= 0) {
-					const indent = ' '.repeat(topLevelIndent);
-					// 在节点末尾（最后一个属性块之后）插入 ech-opts 属性
-					const echOptsLines = [
-						`${indent}ech-opts:`,
-						`${indent}  enable: true`
-					];
-					if (ECH_SNI) echOptsLines.push(`${indent}  query-server-name: ${ECH_SNI}`);
-					nodeLines.splice(insertIndex + 1, 0, ...echOptsLines);
-				}
-			}
-
+			if (需要处理ECH && 获取凭据值(nodeText, false) === uuid.trim()) nodeLines = 添加Block格式ECHOpts(nodeLines, topLevelIndent);
 			processedLines.push(...nodeLines);
 		} else {
 			processedLines.push(line);
@@ -2240,7 +2132,7 @@ async function getECH(host) {
 	}
 }
 
-async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
+async function 读取config_JSON(env, hostname, userID, UA = "Mozilla/5.0", 重置配置 = false) {
 	//const host = 随机替换通配符(hostname);
 	const _p = atob("UFJPWFlJUA==");
 	const host = hostname, Ali_DoH = "https://dns.alidns.com/dns-query", ECH_SNI = "cloudflare-ech.com", 占位符 = '{{IP:PORT}}', 初始化开始时间 = performance.now(), 默认配置JSON = {
@@ -2252,7 +2144,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
 		协议类型: "v" + "le" + "ss",
 		传输协议: "ws",
 		gRPC模式: "gun",
-		gRPCUserAgent: "Mozilla/5.0",
+		gRPCUserAgent: UA,
 		跳过证书验证: false,
 		启用0RTT: false,
 		TLS分片: null,
@@ -2334,7 +2226,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
 		config_JSON = 默认配置JSON;
 	}
 
-	if (!config_JSON.gRPCUserAgent) config_JSON.gRPCUserAgent = "Mozilla/5.0";
+	if (!config_JSON.gRPCUserAgent) config_JSON.gRPCUserAgent = UA;
 	config_JSON.HOST = host;
 	if (!config_JSON.HOSTS) config_JSON.HOSTS = [hostname];
 	if (env.HOST) config_JSON.HOSTS = (await 整理成数组(env.HOST)).map(h => h.toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0]);
@@ -3126,68 +3018,68 @@ async function html1101(host, 访问IP) {
 <!--[if gte IE 10]><!-->
 <script>
   if (!navigator.cookieEnabled) {
-	window.addEventListener('DOMContentLoaded', function () {
-	  var cookieEl = document.getElementById('cookie-alert');
-	  cookieEl.style.display = 'block';
-	})
+    window.addEventListener('DOMContentLoaded', function () {
+      var cookieEl = document.getElementById('cookie-alert');
+      cookieEl.style.display = 'block';
+    })
   }
 </script>
 <!--<![endif]-->
 
 </head>
 <body>
-	<div id="cf-wrapper">
-		<div class="cf-alert cf-alert-error cf-cookie-error" id="cookie-alert" data-translate="enable_cookies">Please enable cookies.</div>
-		<div id="cf-error-details" class="cf-error-details-wrapper">
-			<div class="cf-wrapper cf-header cf-error-overview">
-				<h1>
-					<span class="cf-error-type" data-translate="error">Error</span>
-					<span class="cf-error-code">1101</span>
-					<small class="heading-ray-id">Ray ID: ${随机字符串} &bull; ${格式化时间戳} UTC</small>
-				</h1>
-				<h2 class="cf-subheadline" data-translate="error_desc">Worker threw exception</h2>
-			</div><!-- /.header -->
-	
-			<section></section><!-- spacer -->
-	
-			<div class="cf-section cf-wrapper">
-				<div class="cf-columns two">
-					<div class="cf-column">
-						<h2 data-translate="what_happened">What happened?</h2>
-							<p>You've requested a page on a website (${host}) that is on the <a href="https://www.cloudflare.com/5xx-error-landing?utm_source=error_100x" target="_blank">Cloudflare</a> network. An unknown error occurred while rendering the page.</p>
-					</div>
-					
-					<div class="cf-column">
-						<h2 data-translate="what_can_i_do">What can I do?</h2>
-							<p><strong>If you are the owner of this website:</strong><br />refer to <a href="https://developers.cloudflare.com/workers/observability/errors/" target="_blank">Workers - Errors and Exceptions</a> and check Workers Logs for ${host}.</p>
-					</div>
-					
-				</div>
-			</div><!-- /.section -->
-	
-			<div class="cf-error-footer cf-wrapper w-240 lg:w-full py-10 sm:py-4 sm:px-8 mx-auto text-center sm:text-left border-solid border-0 border-t border-gray-300">
-	<p class="text-13">
-	  <span class="cf-footer-item sm:block sm:mb-1">Cloudflare Ray ID: <strong class="font-semibold"> ${随机字符串}</strong></span>
-	  <span class="cf-footer-separator sm:hidden">&bull;</span>
-	  <span id="cf-footer-item-ip" class="cf-footer-item hidden sm:block sm:mb-1">
-		Your IP:
-		<button type="button" id="cf-footer-ip-reveal" class="cf-footer-ip-reveal-btn">Click to reveal</button>
-		<span class="hidden" id="cf-footer-ip">${访问IP}</span>
-		<span class="cf-footer-separator sm:hidden">&bull;</span>
-	  </span>
-	  <span class="cf-footer-item sm:block sm:mb-1"><span>Performance &amp; security by</span> <a rel="noopener noreferrer" href="https://www.cloudflare.com/5xx-error-landing" id="brand_link" target="_blank">Cloudflare</a></span>
-	  
-	</p>
-	<script>(function(){function d(){var b=a.getElementById("cf-footer-item-ip"),c=a.getElementById("cf-footer-ip-reveal");b&&"classList"in b&&(b.classList.remove("hidden"),c.addEventListener("click",function(){c.classList.add("hidden");a.getElementById("cf-footer-ip").classList.remove("hidden")}))}var a=document;document.addEventListener&&a.addEventListener("DOMContentLoaded",d)})();</script>
+    <div id="cf-wrapper">
+        <div class="cf-alert cf-alert-error cf-cookie-error" id="cookie-alert" data-translate="enable_cookies">Please enable cookies.</div>
+        <div id="cf-error-details" class="cf-error-details-wrapper">
+            <div class="cf-wrapper cf-header cf-error-overview">
+                <h1>
+                    <span class="cf-error-type" data-translate="error">Error</span>
+                    <span class="cf-error-code">1101</span>
+                    <small class="heading-ray-id">Ray ID: ${随机字符串} &bull; ${格式化时间戳} UTC</small>
+                </h1>
+                <h2 class="cf-subheadline" data-translate="error_desc">Worker threw exception</h2>
+            </div><!-- /.header -->
+    
+            <section></section><!-- spacer -->
+    
+            <div class="cf-section cf-wrapper">
+                <div class="cf-columns two">
+                    <div class="cf-column">
+                        <h2 data-translate="what_happened">What happened?</h2>
+                            <p>You've requested a page on a website (${host}) that is on the <a href="https://www.cloudflare.com/5xx-error-landing?utm_source=error_100x" target="_blank">Cloudflare</a> network. An unknown error occurred while rendering the page.</p>
+                    </div>
+                    
+                    <div class="cf-column">
+                        <h2 data-translate="what_can_i_do">What can I do?</h2>
+                            <p><strong>If you are the owner of this website:</strong><br />refer to <a href="https://developers.cloudflare.com/workers/observability/errors/" target="_blank">Workers - Errors and Exceptions</a> and check Workers Logs for ${host}.</p>
+                    </div>
+                    
+                </div>
+            </div><!-- /.section -->
+    
+            <div class="cf-error-footer cf-wrapper w-240 lg:w-full py-10 sm:py-4 sm:px-8 mx-auto text-center sm:text-left border-solid border-0 border-t border-gray-300">
+    <p class="text-13">
+      <span class="cf-footer-item sm:block sm:mb-1">Cloudflare Ray ID: <strong class="font-semibold"> ${随机字符串}</strong></span>
+      <span class="cf-footer-separator sm:hidden">&bull;</span>
+      <span id="cf-footer-item-ip" class="cf-footer-item hidden sm:block sm:mb-1">
+        Your IP:
+        <button type="button" id="cf-footer-ip-reveal" class="cf-footer-ip-reveal-btn">Click to reveal</button>
+        <span class="hidden" id="cf-footer-ip">${访问IP}</span>
+        <span class="cf-footer-separator sm:hidden">&bull;</span>
+      </span>
+      <span class="cf-footer-item sm:block sm:mb-1"><span>Performance &amp; security by</span> <a rel="noopener noreferrer" href="https://www.cloudflare.com/5xx-error-landing" id="brand_link" target="_blank">Cloudflare</a></span>
+      
+    </p>
+    <script>(function(){function d(){var b=a.getElementById("cf-footer-item-ip"),c=a.getElementById("cf-footer-ip-reveal");b&&"classList"in b&&(b.classList.remove("hidden"),c.addEventListener("click",function(){c.classList.add("hidden");a.getElementById("cf-footer-ip").classList.remove("hidden")}))}var a=document;document.addEventListener&&a.addEventListener("DOMContentLoaded",d)})();</script>
   </div><!-- /.error-footer -->
 
-		</div><!-- /#cf-error-details -->
-	</div><!-- /#cf-wrapper -->
+        </div><!-- /#cf-error-details -->
+    </div><!-- /#cf-wrapper -->
 
-	 <script>
-	window._cf_translation = {};
-	
-	
+     <script>
+    window._cf_translation = {};
+    
+    
   </script> 
 </body>
 </html>`;
