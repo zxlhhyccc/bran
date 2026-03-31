@@ -1433,33 +1433,37 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 	const HOSTS = Array.isArray(config_JSON?.HOSTS) ? [...config_JSON.HOSTS] : [];
 	const ECH_SNI = config_JSON?.ECHConfig?.SNI || null;
 	const ECH_DNS = config_JSON?.ECHConfig?.DNS;
+	const 需要处理ECH = Boolean(uuid && ECH启用);
+	const gRPCUserAgent = (typeof config_JSON?.gRPCUserAgent === 'string' && config_JSON.gRPCUserAgent.trim()) ? config_JSON.gRPCUserAgent.trim() : null;
+	const 需要处理gRPC = config_JSON?.传输协议 === "grpc" && Boolean(gRPCUserAgent);
+	const gRPCUserAgentYAML = gRPCUserAgent ? JSON.stringify(gRPCUserAgent) : null;
 	let clash_yaml = Clash_原始订阅内容.replace(/mode:\s*Rule\b/g, 'mode: rule');
 
 	// 基础 DNS 配置块（不含 nameserver-policy）
 	const baseDnsBlock = `dns:
   enable: true
   default-nameserver:
-	- 223.5.5.5
-	- 119.29.29.29
-	- 114.114.114.114
+    - 223.5.5.5
+    - 119.29.29.29
+    - 114.114.114.114
   use-hosts: true
   nameserver:
-	- https://sm2.doh.pub/dns-query
-	- https://dns.alidns.com/dns-query
+    - https://sm2.doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
   fallback:
-	- 8.8.4.4
-	- 208.67.220.220
+    - 8.8.4.4
+    - 208.67.220.220
   fallback-filter:
-	geoip: true
-	geoip-code: CN
-	ipcidr:
-	  - 240.0.0.0/4
-	  - 127.0.0.1/32
-	  - 0.0.0.0/32
-	domain:
-	  - '+.google.com'
-	  - '+.facebook.com'
-	  - '+.youtube.com'
+    geoip: true
+    geoip-code: CN
+    ipcidr:
+      - 240.0.0.0/4
+      - 127.0.0.1/32
+      - 0.0.0.0/32
+    domain:
+      - '+.google.com'
+      - '+.facebook.com'
+      - '+.youtube.com'
 `;
 
 	// 检查是否存在 dns: 字段（可能在任意行，行首无缩进）
@@ -1520,8 +1524,92 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 		}
 	}
 
-	// 如果没有 uuid 或 ECH 未启用，直接返回
-	if (!uuid || !ECH启用) return clash_yaml;
+	// 无需做节点热补丁时，直接返回
+	if (!需要处理ECH && !需要处理gRPC) return clash_yaml;
+
+	const 匹配到gRPC网络 = (text) => /(?:^|[,{])\s*network:\s*(?:"grpc"|'grpc'|grpc)(?=\s*(?:[,}\n#]|$))/mi.test(text);
+
+	const 添加Flow格式gRPCUserAgent = (nodeText) => {
+		if (!匹配到gRPC网络(nodeText) || /grpc-user-agent\s*:/i.test(nodeText)) return nodeText;
+		if (/grpc-opts:\s*\{/i.test(nodeText)) {
+			return nodeText.replace(/grpc-opts:\s*\{([\s\S]*?)\}/i, (all, inner) => {
+				if (/grpc-user-agent\s*:/i.test(inner)) return all;
+				let content = inner.trim();
+				if (content.endsWith(',')) content = content.slice(0, -1).trim();
+				const patchedContent = content ? `${content}, grpc-user-agent: ${gRPCUserAgentYAML}` : `grpc-user-agent: ${gRPCUserAgentYAML}`;
+				return `grpc-opts: {${patchedContent}}`;
+			});
+		}
+		return nodeText.replace(/\}(\s*)$/, `, grpc-opts: {grpc-user-agent: ${gRPCUserAgentYAML}}}$1`);
+	};
+
+	const 添加Block格式gRPCUserAgent = (nodeLines, topLevelIndent) => {
+		const 顶级缩进 = ' '.repeat(topLevelIndent);
+		let grpcOptsIndex = -1;
+
+		for (let idx = 0; idx < nodeLines.length; idx++) {
+			const line = nodeLines[idx];
+			if (!line.trim()) continue;
+			const indent = line.search(/\S/);
+			if (indent !== topLevelIndent) continue;
+			if (/^\s*grpc-opts:\s*(?:#.*)?$/.test(line) || /^\s*grpc-opts:\s*\{.*\}\s*(?:#.*)?$/.test(line)) {
+				grpcOptsIndex = idx;
+				break;
+			}
+		}
+
+		if (grpcOptsIndex === -1) {
+			let insertIndex = -1;
+			for (let j = nodeLines.length - 1; j >= 0; j--) {
+				if (nodeLines[j].trim()) {
+					insertIndex = j;
+					break;
+				}
+			}
+			if (insertIndex >= 0) {
+				nodeLines.splice(insertIndex + 1, 0, `${顶级缩进}grpc-opts:`, `${顶级缩进}  grpc-user-agent: ${gRPCUserAgentYAML}`);
+			}
+			return nodeLines;
+		}
+
+		const grpcLine = nodeLines[grpcOptsIndex];
+		if (/^\s*grpc-opts:\s*\{.*\}\s*(?:#.*)?$/.test(grpcLine)) {
+			if (/grpc-user-agent\s*:/i.test(grpcLine)) return nodeLines;
+			nodeLines[grpcOptsIndex] = grpcLine.replace(/grpc-opts:\s*\{([\s\S]*?)\}/i, (all, inner) => {
+				if (/grpc-user-agent\s*:/i.test(inner)) return all;
+				let content = inner.trim();
+				if (content.endsWith(',')) content = content.slice(0, -1).trim();
+				const patchedContent = content ? `${content}, grpc-user-agent: ${gRPCUserAgentYAML}` : `grpc-user-agent: ${gRPCUserAgentYAML}`;
+				return `grpc-opts: {${patchedContent}}`;
+			});
+			return nodeLines;
+		}
+
+		let blockEndIndex = nodeLines.length;
+		let 子级缩进 = topLevelIndent + 2;
+		let 已有gRPCUserAgent = false;
+
+		for (let idx = grpcOptsIndex + 1; idx < nodeLines.length; idx++) {
+			const line = nodeLines[idx];
+			const trimmed = line.trim();
+			if (!trimmed) continue;
+			const indent = line.search(/\S/);
+			if (indent <= topLevelIndent) {
+				blockEndIndex = idx;
+				break;
+			}
+			if (indent > topLevelIndent && 子级缩进 === topLevelIndent + 2) 子级缩进 = indent;
+			if (/^grpc-user-agent\s*:/.test(trimmed)) {
+				已有gRPCUserAgent = true;
+				break;
+			}
+		}
+
+		if (!已有gRPCUserAgent) {
+			nodeLines.splice(blockEndIndex, 0, `${' '.repeat(子级缩进)}grpc-user-agent: ${gRPCUserAgentYAML}`);
+		}
+		return nodeLines;
+	};
 
 	// ECH 启用时，处理代理节点添加 ech-opts
 	const lines = clash_yaml.split('\n');
@@ -1533,7 +1621,7 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 		const trimmedLine = line.trim();
 
 		// 处理行格式（Flow）：- {name: ..., uuid: ..., ...}
-		if (trimmedLine.startsWith('- {') && (trimmedLine.includes('uuid:') || trimmedLine.includes('password:'))) {
+		if (trimmedLine.startsWith('- {')) {
 			let fullNode = line;
 			let braceCount = (line.match(/\{/g) || []).length - (line.match(/\}/g) || []).length;
 
@@ -1542,6 +1630,11 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 				i++;
 				fullNode += '\n' + lines[i];
 				braceCount += (lines[i].match(/\{/g) || []).length - (lines[i].match(/\}/g) || []).length;
+			}
+
+			// gRPC 传输节点补充 grpc-user-agent
+			if (需要处理gRPC) {
+				fullNode = 添加Flow格式gRPCUserAgent(fullNode);
 			}
 
 			// 获取代理类型
@@ -1558,7 +1651,7 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 			const credentialPattern = new RegExp(`${credentialField}:\\s*([^,}\\n]+)`);
 			const credentialMatch = fullNode.match(credentialPattern);
 
-			if (credentialMatch && credentialMatch[1].trim() === uuid.trim()) {
+			if (需要处理ECH && credentialMatch && credentialMatch[1].trim() === uuid.trim()) {
 				// 在最后一个}前添加ech-opts
 				fullNode = fullNode.replace(/\}(\s*)$/, `, ech-opts: {enable: true${ECH_SNI ? `, query-server-name: ${ECH_SNI}` : ''}}}$1`);
 			}
@@ -1603,7 +1696,14 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 			}
 
 			// 获取代理类型
-			const nodeText = nodeLines.join('\n');
+			let nodeText = nodeLines.join('\n');
+
+			// gRPC 传输节点补充 grpc-user-agent
+			if (需要处理gRPC && 匹配到gRPC网络(nodeText)) {
+				nodeLines = 添加Block格式gRPCUserAgent(nodeLines, topLevelIndent);
+				nodeText = nodeLines.join('\n');
+			}
+
 			const typeMatch = nodeText.match(/type:\s*(\w+)/);
 			const proxyType = typeMatch ? typeMatch[1] : 'vl' + 'ess';
 
@@ -1617,7 +1717,7 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 			const credentialPattern = new RegExp(`${credentialField}:\\s*([^\\n]+)`);
 			const credentialMatch = nodeText.match(credentialPattern);
 
-			if (credentialMatch && credentialMatch[1].trim() === uuid.trim()) {
+			if (需要处理ECH && credentialMatch && credentialMatch[1].trim() === uuid.trim()) {
 				// 找到在哪里插入ech-opts
 				// 策略：在最后一个顶级属性后面插入，或在ws-opts之前插入
 				let insertIndex = -1;
