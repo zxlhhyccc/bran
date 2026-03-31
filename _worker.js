@@ -2143,6 +2143,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
 		协议类型: "v" + "le" + "ss",
 		传输协议: "ws",
 		gRPC模式: "gun",
+		gRPCUserAgent: "Mozilla/5.0",
 		跳过证书验证: false,
 		启用0RTT: false,
 		TLS分片: null,
@@ -2224,6 +2225,7 @@ async function 读取config_JSON(env, hostname, userID, 重置配置 = false) {
 		config_JSON = 默认配置JSON;
 	}
 
+	if (!config_JSON.gRPCUserAgent) config_JSON.gRPCUserAgent = "Mozilla/5.0";
 	config_JSON.HOST = host;
 	if (!config_JSON.HOSTS) config_JSON.HOSTS = [hostname];
 	if (env.HOST) config_JSON.HOSTS = (await 整理成数组(env.HOST)).map(h => h.toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0]);
