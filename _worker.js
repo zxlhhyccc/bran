@@ -285,7 +285,7 @@ export default {
 										}
 									}
 								}
-								const 请求优选API内容 = await 请求优选API(优选API);
+								const 请求优选API内容 = await 请求优选API(优选API, config_JSON.协议类型 === 'ss' ? (config_JSON.SS.TLS ? '443' : '80') : '443');
 								const 合并其他节点数组 = [...new Set(其他节点.concat(请求优选API内容[1]))];
 								其他节点LINK = 合并其他节点数组.length > 0 ? 合并其他节点数组.join('\n') + '\n' : '';
 								const 优选API的IP = 请求优选API内容[0];
@@ -315,7 +315,7 @@ export default {
 
 								if (match) {
 									节点地址 = match[1];  // IP地址或域名(可能带方括号)
-									节点端口 = match[2] || "443";  // 端口,默认443
+									节点端口 = match[2] || config_JSON.协议类型 === 'ss' ? (config_JSON.SS.TLS ? '443' : '80') : '443';  // 端口,TLS默认443 noTLS默认80
 									节点备注 = match[3] || 节点地址;  // 备注,默认为地址本身
 								} else {
 									// 不规范的格式，跳过处理返回null
@@ -332,7 +332,6 @@ export default {
 
 								if (协议类型 === 'ss') {
 									完整节点路径 = 完整节点路径.includes('?') ? 完整节点路径.replace('?', '?enc=' + config_JSON.SS.加密方式 + '&') : (完整节点路径 + '?enc=' + config_JSON.SS.加密方式);
-									//if (!isSubConverterRequest) 完整节点路径 = 完整节点路径.replace(/([=,])/g, '\\$1');
 									return `ss://${btoa(config_JSON.SS.加密方式 + ':')}MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAw@${节点地址}:${节点端口}?plugin=${encodeURIComponent(`v2ray-plugin;mode=websocket;host=example.com;path=${完整节点路径 + (config_JSON.SS.TLS ? ';tls' : '')}`)}#${encodeURIComponent(节点备注)}`;
 								} else return `${协议类型}://00000000-0000-4000-8000-000000000000@${节点地址}:${节点端口}?security=tls&type=${传输协议 + ECHLINK参数}&${域名字段名}=example.com&fp=${config_JSON.Fingerprint}&sni=example.com&${路径字段名}=${encodeURIComponent(作为优选订阅生成器 ? '/' : (config_JSON.随机路径 ? 随机路径(完整节点路径) : 完整节点路径)) + TLS分片参数}&encryption=none${config_JSON.跳过证书验证 ? '&insecure=1&allowInsecure=1' : ''}#${encodeURIComponent(节点备注)}`;
 							}).filter(item => item !== null).join('\n');
