@@ -919,7 +919,7 @@ async function 处理WS请求(request, yourUUID) {
 	const 请求URL = new URL(request.url);
 	const wssPair = new WebSocketPair();
 	const [clientSock, serverSock] = Object.values(wssPair);
-	serverSock.accept();// @ts-ignore
+	serverSock.accept();
 	serverSock.binaryType = 'arraybuffer';
 	let remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
 	let isDnsQuery = false;
@@ -964,11 +964,104 @@ async function 处理WS请求(request, yourUUID) {
 		if (!ss初始化任务) {
 			ss初始化任务 = (async () => {
 				const 加密配置 = SS支持加密配置[请求URL.searchParams.get('enc')] || SS支持加密配置['aes-128-gcm'];
-				const 入站解密器 = 创建SS入站解密器(加密配置, yourUUID);
-				const 出站加密器 = await 创建SS出站加密器(加密配置, yourUUID);
+				const 入站状态 = {
+					buffer: new Uint8Array(0),
+					hasSalt: false,
+					waitPayloadLength: null,
+					decryptKey: null,
+					nonceCounter: new Uint8Array(SSNonce长度),
+				};
+				const 入站主密钥任务 = SS派生主密钥(yourUUID, 加密配置.keyLen);
+				const 入站解密器 = {
+					async 输入(dataChunk) {
+						const chunk = SS数据转Uint8Array(dataChunk);
+						if (chunk.byteLength > 0) 入站状态.buffer = SS拼接字节(入站状态.buffer, chunk);
+						if (!入站状态.hasSalt) {
+							if (入站状态.buffer.byteLength < 加密配置.saltLen) return [];
+							const salt = 入站状态.buffer.subarray(0, 加密配置.saltLen);
+							入站状态.buffer = 入站状态.buffer.subarray(加密配置.saltLen);
+							const masterKey = await 入站主密钥任务;
+							入站状态.decryptKey = await SS派生会话密钥(加密配置, masterKey, salt, ['decrypt']);
+							入站状态.hasSalt = true;
+						}
+						const plaintextChunks = [];
+						while (true) {
+							if (入站状态.waitPayloadLength === null) {
+								const lengthCipherTotalLength = 2 + SSAEAD标签长度;
+								if (入站状态.buffer.byteLength < lengthCipherTotalLength) break;
+								const lengthCipher = 入站状态.buffer.subarray(0, lengthCipherTotalLength);
+								入站状态.buffer = 入站状态.buffer.subarray(lengthCipherTotalLength);
+								const lengthPlain = await SSAEAD解密(入站状态.decryptKey, 入站状态.nonceCounter, lengthCipher);
+								if (lengthPlain.byteLength !== 2) throw new Error('SS length decrypt failed');
+								const payloadLength = (lengthPlain[0] << 8) | lengthPlain[1];
+								if (payloadLength < 0 || payloadLength > 加密配置.maxChunk) throw new Error(`SS payload length invalid: ${payloadLength}`);
+								入站状态.waitPayloadLength = payloadLength;
+							}
+							const payloadCipherTotalLength = 入站状态.waitPayloadLength + SSAEAD标签长度;
+							if (入站状态.buffer.byteLength < payloadCipherTotalLength) break;
+							const payloadCipher = 入站状态.buffer.subarray(0, payloadCipherTotalLength);
+							入站状态.buffer = 入站状态.buffer.subarray(payloadCipherTotalLength);
+							const payloadPlain = await SSAEAD解密(入站状态.decryptKey, 入站状态.nonceCounter, payloadCipher);
+							plaintextChunks.push(payloadPlain);
+							入站状态.waitPayloadLength = null;
+						}
+						return plaintextChunks;
+					},
+				};
+				const 出站主密钥 = await SS派生主密钥(yourUUID, 加密配置.keyLen);
+				const 出站盐 = crypto.getRandomValues(new Uint8Array(加密配置.saltLen));
+				const 出站加密密钥 = await SS派生会话密钥(加密配置, 出站主密钥, 出站盐, ['encrypt']);
+				const 出站Nonce计数器 = new Uint8Array(SSNonce长度);
+				let 出站盐已发送 = false;
+				const 出站加密器 = {
+					async 加密(dataChunk) {
+						const plaintextData = SS数据转Uint8Array(dataChunk);
+						const outboundChunks = [];
+						if (!出站盐已发送) {
+							outboundChunks.push(出站盐);
+							出站盐已发送 = true;
+						}
+						if (plaintextData.byteLength === 0) return SS拼接字节(...outboundChunks);
+						let offset = 0;
+						while (offset < plaintextData.byteLength) {
+							const end = Math.min(offset + 加密配置.maxChunk, plaintextData.byteLength);
+							const payloadPlain = plaintextData.subarray(offset, end);
+							const lengthPlain = new Uint8Array(2);
+							lengthPlain[0] = (payloadPlain.byteLength >>> 8) & 0xff;
+							lengthPlain[1] = payloadPlain.byteLength & 0xff;
+							const lengthCipher = await SSAEAD加密(出站加密密钥, 出站Nonce计数器, lengthPlain);
+							const payloadCipher = await SSAEAD加密(出站加密密钥, 出站Nonce计数器, payloadPlain);
+							outboundChunks.push(lengthCipher, payloadCipher);
+							offset = end;
+						}
+						return SS拼接字节(...outboundChunks);
+					},
+				};
+				let SS发送队列 = Promise.resolve();
+				const 回包Socket = {
+					get readyState() {
+						return serverSock.readyState;
+					},
+					send(data) {
+						const chunk = SS数据转Uint8Array(data);
+						SS发送队列 = SS发送队列.then(async () => {
+							if (serverSock.readyState !== WebSocket.OPEN) return;
+							const encrypted = await 出站加密器.加密(chunk);
+							if (encrypted.byteLength > 0 && serverSock.readyState === WebSocket.OPEN) {
+								serverSock.send(encrypted.buffer);
+							}
+						}).catch((error) => {
+							console.log(`[SS发送] 加密失败: ${error?.message || error}`);
+							closeSocketQuietly(serverSock);
+						});
+					},
+					close() {
+						closeSocketQuietly(serverSock);
+					}
+				};
 				ss上下文 = {
 					入站解密器,
-					回包Socket: 创建SS回包Socket(serverSock, 出站加密器),
+					回包Socket,
 					首包已建立: false,
 					目标主机: '',
 					目标端口: 0,
@@ -994,9 +1087,36 @@ async function 处理WS请求(request, yourUUID) {
 				await forwardataTCP(上下文.目标主机, 上下文.目标端口, 明文块, 上下文.回包Socket, null, remoteConnWrapper, yourUUID);
 				continue;
 			}
-			const 解析结果 = 解析SS请求(明文块, yourUUID);
-			if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid ss request');
-			const { port, hostname, rawClientData } = 解析结果;
+			const 明文数据 = SS数据转Uint8Array(明文块);
+			if (明文数据.byteLength < 3) throw new Error('invalid ss data');
+			const addressType = 明文数据[0];
+			let cursor = 1;
+			let hostname = '';
+			if (addressType === 1) {
+				if (明文数据.byteLength < cursor + 4 + 2) throw new Error('invalid ss ipv4 length');
+				hostname = `${明文数据[cursor]}.${明文数据[cursor + 1]}.${明文数据[cursor + 2]}.${明文数据[cursor + 3]}`;
+				cursor += 4;
+			} else if (addressType === 3) {
+				if (明文数据.byteLength < cursor + 1) throw new Error('invalid ss domain length');
+				const domainLength = 明文数据[cursor];
+				cursor += 1;
+				if (明文数据.byteLength < cursor + domainLength + 2) throw new Error('invalid ss domain data');
+				hostname = SS文本解码器.decode(明文数据.subarray(cursor, cursor + domainLength));
+				cursor += domainLength;
+			} else if (addressType === 4) {
+				if (明文数据.byteLength < cursor + 16 + 2) throw new Error('invalid ss ipv6 length');
+				const ipv6 = [];
+				const ipv6View = new DataView(明文数据.buffer, 明文数据.byteOffset + cursor, 16);
+				for (let i = 0; i < 8; i++) ipv6.push(ipv6View.getUint16(i * 2).toString(16));
+				hostname = ipv6.join(':');
+				cursor += 16;
+			} else {
+				throw new Error(`invalid ss addressType: ${addressType}`);
+			}
+			if (!hostname) throw new Error(`invalid ss address: ${addressType}`);
+			const port = (明文数据[cursor] << 8) | 明文数据[cursor + 1];
+			cursor += 2;
+			const rawClientData = 明文数据.subarray(cursor);
 			if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 			上下文.首包已建立 = true;
 			上下文.目标主机 = hostname;
@@ -1202,24 +1322,11 @@ function SS拼接字节(...chunkList) {
 	return result;
 }
 
-function SS读取U16BE(data, offset = 0) {
-	return (data[offset] << 8) | data[offset + 1];
-}
-
-function SS写入U16BE(data, offset, value) {
-	data[offset] = (value >>> 8) & 0xff;
-	data[offset + 1] = value & 0xff;
-}
-
 function SS递增Nonce计数器(counter) {
 	for (let i = 0; i < counter.length; i++) {
 		counter[i] = (counter[i] + 1) & 0xff;
 		if (counter[i] !== 0) return;
 	}
-}
-
-async function SS生成MD5(data) {
-	return new Uint8Array(await crypto.subtle.digest('MD5', data));
 }
 
 async function SS派生主密钥(passwordText, keyLen) {
@@ -1233,7 +1340,7 @@ async function SS派生主密钥(passwordText, keyLen) {
 			const input = new Uint8Array(previous.byteLength + passwordBytes.byteLength);
 			input.set(previous, 0);
 			input.set(passwordBytes, previous.byteLength);
-			previous = await SS生成MD5(input);
+			previous = new Uint8Array(await crypto.subtle.digest('MD5', input));
 			result = SS拼接字节(result, previous);
 		}
 		return result.slice(0, keyLen);
@@ -1247,7 +1354,7 @@ async function SS派生主密钥(passwordText, keyLen) {
 	}
 }
 
-async function SSHKDFSHA1(ikm, salt, info, outputLen) {
+async function SS派生会话密钥(config, masterKey, salt, usages) {
 	const saltHmacKey = await crypto.subtle.importKey(
 		'raw',
 		salt,
@@ -1255,7 +1362,7 @@ async function SSHKDFSHA1(ikm, salt, info, outputLen) {
 		false,
 		['sign'],
 	);
-	const prk = new Uint8Array(await crypto.subtle.sign('HMAC', saltHmacKey, ikm));
+	const prk = new Uint8Array(await crypto.subtle.sign('HMAC', saltHmacKey, masterKey));
 	const prkHmacKey = await crypto.subtle.importKey(
 		'raw',
 		prk,
@@ -1263,23 +1370,18 @@ async function SSHKDFSHA1(ikm, salt, info, outputLen) {
 		false,
 		['sign'],
 	);
-	const output = new Uint8Array(outputLen);
+	const subKey = new Uint8Array(config.keyLen);
 	let previous = new Uint8Array(0);
 	let written = 0;
 	let counter = 1;
-	while (written < outputLen) {
-		const input = SS拼接字节(previous, info, new Uint8Array([counter]));
+	while (written < config.keyLen) {
+		const input = SS拼接字节(previous, SS子密钥信息, new Uint8Array([counter]));
 		previous = new Uint8Array(await crypto.subtle.sign('HMAC', prkHmacKey, input));
-		const copyLength = Math.min(previous.byteLength, outputLen - written);
-		output.set(previous.subarray(0, copyLength), written);
+		const copyLength = Math.min(previous.byteLength, config.keyLen - written);
+		subKey.set(previous.subarray(0, copyLength), written);
 		written += copyLength;
 		counter += 1;
 	}
-	return output;
-}
-
-async function SS派生会话密钥(config, masterKey, salt, usages) {
-	const subKey = await SSHKDFSHA1(masterKey, salt, SS子密钥信息, config.keyLen);
 	return crypto.subtle.importKey(
 		'raw',
 		subKey,
@@ -1309,149 +1411,6 @@ async function SSAEAD解密(cryptoKey, nonceCounter, ciphertext) {
 	);
 	SS递增Nonce计数器(nonceCounter);
 	return new Uint8Array(plaintext);
-}
-
-function 创建SS入站解密器(config, passwordText) {
-	const state = {
-		buffer: new Uint8Array(0),
-		hasSalt: false,
-		waitPayloadLength: null,
-		decryptKey: null,
-		nonceCounter: new Uint8Array(SSNonce长度),
-	};
-	const masterKeyPromise = SS派生主密钥(passwordText, config.keyLen);
-	return {
-		async 输入(dataChunk) {
-			const chunk = SS数据转Uint8Array(dataChunk);
-			if (chunk.byteLength > 0) state.buffer = SS拼接字节(state.buffer, chunk);
-			if (!state.hasSalt) {
-				if (state.buffer.byteLength < config.saltLen) return [];
-				const salt = state.buffer.subarray(0, config.saltLen);
-				state.buffer = state.buffer.subarray(config.saltLen);
-				const masterKey = await masterKeyPromise;
-				state.decryptKey = await SS派生会话密钥(config, masterKey, salt, ['decrypt']);
-				state.hasSalt = true;
-			}
-			const plaintextChunks = [];
-			while (true) {
-				if (state.waitPayloadLength === null) {
-					const lengthCipherTotalLength = 2 + SSAEAD标签长度;
-					if (state.buffer.byteLength < lengthCipherTotalLength) break;
-					const lengthCipher = state.buffer.subarray(0, lengthCipherTotalLength);
-					state.buffer = state.buffer.subarray(lengthCipherTotalLength);
-					const lengthPlain = await SSAEAD解密(state.decryptKey, state.nonceCounter, lengthCipher);
-					if (lengthPlain.byteLength !== 2) throw new Error('SS length decrypt failed');
-					const payloadLength = SS读取U16BE(lengthPlain, 0);
-					if (payloadLength < 0 || payloadLength > config.maxChunk) throw new Error(`SS payload length invalid: ${payloadLength}`);
-					state.waitPayloadLength = payloadLength;
-				}
-				const payloadCipherTotalLength = state.waitPayloadLength + SSAEAD标签长度;
-				if (state.buffer.byteLength < payloadCipherTotalLength) break;
-				const payloadCipher = state.buffer.subarray(0, payloadCipherTotalLength);
-				state.buffer = state.buffer.subarray(payloadCipherTotalLength);
-				const payloadPlain = await SSAEAD解密(state.decryptKey, state.nonceCounter, payloadCipher);
-				plaintextChunks.push(payloadPlain);
-				state.waitPayloadLength = null;
-			}
-			return plaintextChunks;
-		},
-	};
-}
-
-async function 创建SS出站加密器(config, passwordText) {
-	const masterKey = await SS派生主密钥(passwordText, config.keyLen);
-	const salt = crypto.getRandomValues(new Uint8Array(config.saltLen));
-	const encryptKey = await SS派生会话密钥(config, masterKey, salt, ['encrypt']);
-	const nonceCounter = new Uint8Array(SSNonce长度);
-	let saltSent = false;
-	return {
-		async 加密(dataChunk) {
-			const plaintextData = SS数据转Uint8Array(dataChunk);
-			const outboundChunks = [];
-			if (!saltSent) {
-				outboundChunks.push(salt);
-				saltSent = true;
-			}
-			if (plaintextData.byteLength === 0) return SS拼接字节(...outboundChunks);
-			let offset = 0;
-			while (offset < plaintextData.byteLength) {
-				const end = Math.min(offset + config.maxChunk, plaintextData.byteLength);
-				const payloadPlain = plaintextData.subarray(offset, end);
-				const lengthPlain = new Uint8Array(2);
-				SS写入U16BE(lengthPlain, 0, payloadPlain.byteLength);
-				const lengthCipher = await SSAEAD加密(encryptKey, nonceCounter, lengthPlain);
-				const payloadCipher = await SSAEAD加密(encryptKey, nonceCounter, payloadPlain);
-				outboundChunks.push(lengthCipher, payloadCipher);
-				offset = end;
-			}
-			return SS拼接字节(...outboundChunks);
-		},
-	};
-}
-
-function 创建SS回包Socket(realSocket, outboundEncryptor) {
-	let sendChain = Promise.resolve();
-	return {
-		get readyState() {
-			return realSocket.readyState;
-		},
-		send(data) {
-			const chunk = SS数据转Uint8Array(data);
-			sendChain = sendChain.then(async () => {
-				if (realSocket.readyState !== WebSocket.OPEN) return;
-				const encrypted = await outboundEncryptor.加密(chunk);
-				if (encrypted.byteLength > 0 && realSocket.readyState === WebSocket.OPEN) {
-					realSocket.send(encrypted.buffer);
-				}
-			}).catch((error) => {
-				console.log(`[SS发送] 加密失败: ${error?.message || error}`);
-				closeSocketQuietly(realSocket);
-			});
-		},
-		close() {
-			closeSocketQuietly(realSocket);
-		}
-	};
-}
-
-function 解析SS请求(chunk, passwordPlainText) {
-	const _ = passwordPlainText;
-	const data = SS数据转Uint8Array(chunk);
-	if (data.byteLength < 3) return { hasError: true, message: 'invalid ss data' };
-	const addressType = data[0];
-	let cursor = 1;
-	let hostname = '';
-	if (addressType === 1) {
-		if (data.byteLength < cursor + 4 + 2) return { hasError: true, message: 'invalid ss ipv4 length' };
-		hostname = `${data[cursor]}.${data[cursor + 1]}.${data[cursor + 2]}.${data[cursor + 3]}`;
-		cursor += 4;
-	} else if (addressType === 3) {
-		if (data.byteLength < cursor + 1) return { hasError: true, message: 'invalid ss domain length' };
-		const domainLength = data[cursor];
-		cursor += 1;
-		if (data.byteLength < cursor + domainLength + 2) return { hasError: true, message: 'invalid ss domain data' };
-		hostname = SS文本解码器.decode(data.subarray(cursor, cursor + domainLength));
-		cursor += domainLength;
-	} else if (addressType === 4) {
-		if (data.byteLength < cursor + 16 + 2) return { hasError: true, message: 'invalid ss ipv6 length' };
-		const ipv6 = [];
-		const ipv6View = new DataView(data.buffer, data.byteOffset + cursor, 16);
-		for (let i = 0; i < 8; i++) ipv6.push(ipv6View.getUint16(i * 2).toString(16));
-		hostname = ipv6.join(':');
-		cursor += 16;
-	} else {
-		return { hasError: true, message: `invalid ss addressType: ${addressType}` };
-	}
-	if (!hostname) return { hasError: true, message: `invalid ss address: ${addressType}` };
-	const port = (data[cursor] << 8) | data[cursor + 1];
-	cursor += 2;
-	return {
-		hasError: false,
-		addressType,
-		port,
-		hostname,
-		rawClientData: data.subarray(cursor),
-	};
 }
 
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID) {
