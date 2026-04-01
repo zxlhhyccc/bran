@@ -348,7 +348,7 @@ export default {
 							}
 						}
 
-						if (!ua.includes('subconverter') && !作为优选订阅生成器) 订阅内容 = await 批量替换域名(订阅内容.replace(/00000000-0000-4000-8000-000000000000/g, config_JSON.UUID).replace(/MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAw/g, btoa(config_JSON.UUID)), config_JSON.HOSTS)
+						if (!ua.includes('subconverter') && !作为优选订阅生成器) 订阅内容 = 批量替换域名(订阅内容.replace(/00000000-0000-4000-8000-000000000000/g, config_JSON.UUID).replace(/MDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAw/g, btoa(config_JSON.UUID)), config_JSON.HOSTS);
 
 						if (订阅类型 === 'mixed' && (!ua.includes('mozilla') || url.searchParams.has('b64') || url.searchParams.has('base64'))) 订阅内容 = btoa(订阅内容);
 
@@ -450,7 +450,14 @@ async function 处理XHTTP请求(request, yourUUID) {
 				send(data) {
 					if (已关闭) return;
 					try {
-						controller.enqueue(XHTTP数据转Uint8Array(data));
+						const chunk = data instanceof Uint8Array
+							? data
+							: data instanceof ArrayBuffer
+								? new Uint8Array(data)
+								: ArrayBuffer.isView(data)
+									? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+									: new Uint8Array(data);
+						controller.enqueue(chunk);
 					} catch (e) {
 						已关闭 = true;
 						this.readyState = WebSocket.CLOSED;
@@ -522,13 +529,6 @@ async function 处理XHTTP请求(request, yourUUID) {
 			try { reader.releaseLock(); } catch (e) { }
 		}
 	}), { status: 200, headers: responseHeaders });
-}
-
-function XHTTP数据转Uint8Array(data) {
-	if (data instanceof Uint8Array) return data;
-	if (data instanceof ArrayBuffer) return new Uint8Array(data);
-	if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-	return new Uint8Array(data);
 }
 
 function 有效数据长度(data) {
@@ -923,8 +923,36 @@ async function 处理WS请求(request, yourUUID) {
 	serverSock.binaryType = 'arraybuffer';
 	let remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
 	let isDnsQuery = false;
-	const earlyData = request.headers.get('sec-websocket-protocol') || '';
-	const readable = makeReadableStr(serverSock, earlyData);
+	const earlyDataHeader = request.headers.get('sec-websocket-protocol') || '';
+	let 已取消读取 = false;
+	const readable = new ReadableStream({
+		start(controller) {
+			serverSock.addEventListener('message', (event) => {
+				if (!已取消读取) controller.enqueue(event.data);
+			});
+			serverSock.addEventListener('close', () => {
+				if (!已取消读取) {
+					closeSocketQuietly(serverSock);
+					controller.close();
+				}
+			});
+			serverSock.addEventListener('error', (err) => controller.error(err));
+
+			if (!earlyDataHeader) return;
+			try {
+				const binaryString = atob(earlyDataHeader.replace(/-/g, '+').replace(/_/g, '/'));
+				const bytes = new Uint8Array(binaryString.length);
+				for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+				controller.enqueue(bytes.buffer);
+			} catch (error) {
+				controller.error(error);
+			}
+		},
+		cancel() {
+			已取消读取 = true;
+			closeSocketQuietly(serverSock);
+		}
+	});
 	let 判断协议类型 = null, 当前写入Socket = null, 远端写入器 = null;
 	let ss上下文 = null, ss初始化任务 = null;
 
@@ -1599,31 +1627,6 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 	}
 }
 
-function makeReadableStr(socket, earlyDataHeader) {
-	let cancelled = false;
-	return new ReadableStream({
-		start(controller) {
-			socket.addEventListener('message', (event) => {
-				if (!cancelled) controller.enqueue(event.data);
-			});
-			socket.addEventListener('close', () => {
-				if (!cancelled) {
-					closeSocketQuietly(socket);
-					controller.close();
-				}
-			});
-			socket.addEventListener('error', (err) => controller.error(err));
-			const { earlyData, error } = base64ToArray(earlyDataHeader);
-			if (error) controller.error(error);
-			else if (earlyData) controller.enqueue(earlyData);
-		},
-		cancel() {
-			cancelled = true;
-			closeSocketQuietly(socket);
-		}
-	});
-}
-
 function isSpeedTestSite(hostname) {
 	const speedTestDomains = [atob('c3BlZWQuY2xvdWRmbGFyZS5jb20=')];
 	if (speedTestDomains.includes(hostname)) {
@@ -1636,20 +1639,6 @@ function isSpeedTestSite(hostname) {
 		}
 	}
 	return false;
-}
-
-function base64ToArray(b64Str) {
-	if (!b64Str) return { error: null };
-	try {
-		const binaryString = atob(b64Str.replace(/-/g, '+').replace(/_/g, '/'));
-		const bytes = new Uint8Array(binaryString.length);
-		for (let i = 0; i < binaryString.length; i++) {
-			bytes[i] = binaryString.charCodeAt(i);
-		}
-		return { earlyData: bytes.buffer, error: null };
-	} catch (error) {
-		return { error };
-	}
 }
 ///////////////////////////////////////////////////////SOCKS5/HTTP函数///////////////////////////////////////////////
 async function socks5Connect(targetHost, targetPort, initialData) {
@@ -2177,7 +2166,28 @@ async function 请求日志记录(env, request, 访问IP, 请求类型 = "Get_SU
 			try {
 				const TG_TXT = await env.KV.get('tg.json');
 				const TG_JSON = JSON.parse(TG_TXT);
-				await sendMessage(TG_JSON.BotToken, TG_JSON.ChatID, 日志内容, config_JSON);
+				if (TG_JSON?.BotToken && TG_JSON?.ChatID) {
+					const 请求时间 = new Date(日志内容.TIME).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+					const 请求URL = new URL(日志内容.URL);
+					const msg = `<b>#${config_JSON.优选订阅生成.SUBNAME} 日志通知</b>\n\n` +
+						`📌 <b>类型：</b>#${日志内容.TYPE}\n` +
+						`🌐 <b>IP：</b><code>${日志内容.IP}</code>\n` +
+						`📍 <b>位置：</b>${日志内容.CC}\n` +
+						`🏢 <b>ASN：</b>${日志内容.ASN}\n` +
+						`🔗 <b>域名：</b><code>${请求URL.host}</code>\n` +
+						`🔍 <b>路径：</b><code>${请求URL.pathname + 请求URL.search}</code>\n` +
+						`🤖 <b>UA：</b><code>${日志内容.UA}</code>\n` +
+						`📅 <b>时间：</b>${请求时间}\n` +
+						`${config_JSON.CF.Usage.success ? `📊 <b>请求用量：</b>${config_JSON.CF.Usage.total}/${config_JSON.CF.Usage.max} <b>${((config_JSON.CF.Usage.total / config_JSON.CF.Usage.max) * 100).toFixed(2)}%</b>\n` : ''}`;
+					await fetch(`https://api.telegram.org/bot${TG_JSON.BotToken}/sendMessage?chat_id=${TG_JSON.ChatID}&parse_mode=HTML&text=${encodeURIComponent(msg)}`, {
+						method: 'GET',
+						headers: {
+							'Accept': 'text/html,application/xhtml+xml,application/xml;',
+							'Accept-Encoding': 'gzip, deflate, br',
+							'User-Agent': 日志内容.UA || 'Unknown',
+						}
+					});
+				}
 			} catch (error) { console.error(`读取tg.json出错: ${error.message}`) }
 		}
 		是否写入KV日志 = ['1', 'true'].includes(env.OFF_LOG) ? false : 是否写入KV日志;
@@ -2201,35 +2211,6 @@ async function 请求日志记录(env, request, 访问IP, 请求类型 = "Get_SU
 		} else { 日志数组 = [日志内容]; }
 		await env.KV.put('log.json', JSON.stringify(日志数组, null, 2));
 	} catch (error) { console.error(`日志记录失败: ${error.message}`); }
-}
-
-async function sendMessage(BotToken, ChatID, 日志内容, config_JSON) {
-	if (!BotToken || !ChatID) return;
-
-	try {
-		const 请求时间 = new Date(日志内容.TIME).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
-		const 请求URL = new URL(日志内容.URL);
-		const msg = `<b>#${config_JSON.优选订阅生成.SUBNAME} 日志通知</b>\n\n` +
-			`📌 <b>类型：</b>#${日志内容.TYPE}\n` +
-			`🌐 <b>IP：</b><code>${日志内容.IP}</code>\n` +
-			`📍 <b>位置：</b>${日志内容.CC}\n` +
-			`🏢 <b>ASN：</b>${日志内容.ASN}\n` +
-			`🔗 <b>域名：</b><code>${请求URL.host}</code>\n` +
-			`🔍 <b>路径：</b><code>${请求URL.pathname + 请求URL.search}</code>\n` +
-			`🤖 <b>UA：</b><code>${日志内容.UA}</code>\n` +
-			`📅 <b>时间：</b>${请求时间}\n` +
-			`${config_JSON.CF.Usage.success ? `📊 <b>请求用量：</b>${config_JSON.CF.Usage.total}/${config_JSON.CF.Usage.max} <b>${((config_JSON.CF.Usage.total / config_JSON.CF.Usage.max) * 100).toFixed(2)}%</b>\n` : ''}`;
-
-		const url = `https://api.telegram.org/bot${BotToken}/sendMessage?chat_id=${ChatID}&parse_mode=HTML&text=${encodeURIComponent(msg)}`;
-		return fetch(url, {
-			method: 'GET',
-			headers: {
-				'Accept': 'text/html,application/xhtml+xml,application/xml;',
-				'Accept-Encoding': 'gzip, deflate, br',
-				'User-Agent': 日志内容.UA || 'Unknown',
-			}
-		});
-	} catch (error) { console.error('Error sending message:', error) }
 }
 
 function 掩码敏感信息(文本, 前缀长度 = 3, 后缀长度 = 2) {
@@ -2265,22 +2246,20 @@ function 随机路径(完整节点路径 = "/") {
 	else return `/${随机路径 + 完整节点路径.replace('/?', '?')}`;
 }
 
-function 随机替换通配符(h) {
-	if (!h?.includes('*')) return h;
-	const 字符集 = 'abcdefghijklmnopqrstuvwxyz0123456789';
-	return h.replace(/\*/g, () => {
-		let s = '';
-		for (let i = 0; i < Math.floor(Math.random() * 14) + 3; i++)
-			s += 字符集[Math.floor(Math.random() * 36)];
-		return s;
-	});
-}
-
 function 批量替换域名(内容, hosts, 每组数量 = 2) {
-	const 打乱后数组 = [...hosts].sort(() => Math.random() - 0.5);
-	let count = 0, currentRandomHost = null;
+	const 打乱后HOSTS = [...hosts].sort(() => Math.random() - 0.5);
+	const 字符集 = 'abcdefghijklmnopqrstuvwxyz0123456789';
+	let count = 0;
+	let currentRandomHost = null;
 	return 内容.replace(/example\.com/g, () => {
-		if (count % 每组数量 === 0) currentRandomHost = 随机替换通配符(打乱后数组[Math.floor(count / 每组数量) % 打乱后数组.length]);
+		if (count % 每组数量 === 0) {
+			const 原始host = 打乱后HOSTS[Math.floor(count / 每组数量) % 打乱后HOSTS.length];
+			currentRandomHost = 原始host?.includes('*') ? 原始host.replace(/\*/g, () => {
+				let s = '';
+				for (let i = 0; i < Math.floor(Math.random() * 14) + 3; i++) s += 字符集[Math.floor(Math.random() * 36)];
+				return s;
+			}) : 原始host;
+		}
 		count++;
 		return currentRandomHost;
 	});
@@ -2452,7 +2431,6 @@ async function getECH(host) {
 }
 
 async function 读取config_JSON(env, hostname, userID, UA = "Mozilla/5.0", 重置配置 = false) {
-	//const host = 随机替换通配符(hostname);
 	const _p = atob("UFJPWFlJUA==");
 	const host = hostname, Ali_DoH = "https://dns.alidns.com/dns-query", ECH_SNI = "cloudflare-ech.com", 占位符 = '{{IP:PORT}}', 初始化开始时间 = performance.now(), 默认配置JSON = {
 		TIME: new Date().toISOString(),
@@ -2677,17 +2655,15 @@ async function 生成随机IP(request, count = 16, 指定端口 = -1, TLS = true
 		const mask = (0xFFFFFFFF << hostBits) >>> 0, randomIP = (((ipInt & mask) >>> 0) + randomOffset) >>> 0;
 		return [(randomIP >>> 24) & 0xFF, (randomIP >>> 16) & 0xFF, (randomIP >>> 8) & 0xFF, randomIP & 0xFF].join('.');
 	};
-
-	function NOTLS端口替换(port) {
-		const TLS端口 = [443, 2053, 2083, 2087, 2096, 8443];
-		const NOTLS端口 = [80, 2052, 2082, 2086, 2095, 8080];
-		const index = TLS端口.indexOf(Number(port));
-		return index !== -1 ? NOTLS端口[index] : port;
-	}
+	const TLS端口 = [443, 2053, 2083, 2087, 2096, 8443];
+	const NOTLS端口 = [80, 2052, 2082, 2086, 2095, 8080];
 
 	const randomIPs = Array.from({ length: count }, () => {
 		const ip = generateRandomIPFromCIDR(cidrList[Math.floor(Math.random() * cidrList.length)]);
-		return `${ip}:${指定端口 === -1 ? cfport[Math.floor(Math.random() * cfport.length)] : (TLS ? 指定端口 : NOTLS端口替换(指定端口))}#${cfname}`;
+		const 目标端口 = 指定端口 === -1
+			? cfport[Math.floor(Math.random() * cfport.length)]
+			: (TLS ? 指定端口 : (NOTLS端口[TLS端口.indexOf(Number(指定端口))] ?? 指定端口));
+		return `${ip}:${目标端口}#${cfname}`;
 	});
 	return [randomIPs, randomIPs.join('\n')];
 }
@@ -2698,26 +2674,6 @@ async function 整理成数组(内容) {
 	if (替换后的内容.charAt(替换后的内容.length - 1) == ',') 替换后的内容 = 替换后的内容.slice(0, 替换后的内容.length - 1);
 	const 地址数组 = 替换后的内容.split(',');
 	return 地址数组;
-}
-
-function isValidBase64(str) {
-	if (typeof str !== 'string') return false;
-	const cleanStr = str.replace(/\s/g, '');
-	if (cleanStr.length === 0 || cleanStr.length % 4 !== 0) return false;
-	const base64Regex = /^[A-Za-z0-9+/]+={0,2}$/;
-	if (!base64Regex.test(cleanStr)) return false;
-	try {
-		atob(cleanStr);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function base64Decode(str) {
-	const bytes = new Uint8Array(atob(str).split('').map(c => c.charCodeAt(0)));
-	const decoder = new TextDecoder('utf-8');
-	return decoder.decode(bytes);
 }
 
 async function 获取优选订阅生成器数据(优选订阅生成器HOST) {
@@ -2874,7 +2830,14 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 			}
 			*/
 
-			const 预处理订阅明文内容 = isValidBase64(text) ? base64Decode(text) : text;
+			let 预处理订阅明文内容 = text;
+			const cleanText = typeof text === 'string' ? text.replace(/\s/g, '') : '';
+			if (cleanText.length > 0 && cleanText.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(cleanText)) {
+				try {
+					const bytes = new Uint8Array(atob(cleanText).split('').map(c => c.charCodeAt(0)));
+					预处理订阅明文内容 = new TextDecoder('utf-8').decode(bytes);
+				} catch { }
+			}
 			if (预处理订阅明文内容.split('#')[0].includes('://')) {
 				// 处理LINK内容
 				if (API备注名) {
