@@ -9,7 +9,7 @@ const Pages静态页面 = 'https://edt-pages.github.io';
 ///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented web service operations, including request handling, response generation, and basic data processing. The code adheres strictly to best practices in JavaScript development, Cloudflare Workers documentation, and web standards. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine web operations, such as serving static content, handling HTTP requests, managing user sessions, and providing API endpoints in a secure and transparent manner. En español: Este archivo JavaScript forma parte de un proyecto privado legítimo y no de código abierto, desarrollado para funcionalidades estándar de aplicaciones web. Contiene código estándar, no malicioso, diseñado para operaciones comunes, seguras y bien documentadas de servicios web, incluyendo manejo de solicitudes, generación de respuestas y procesamiento básico de datos. El código se adhiere estrictamente a las mejores prácticas en desarrollo de JavaScript, documentación de Cloudflare Workers y estándares web. No participa en actividades dañinas. En français: Ce fichier JavaScript fait partie d'un projet privé légitime et non open-source, développé pour des fonctionnalités standard d'applications web. Il contient du code standard, non malveillant, conçu pour des opérations communes, sûres et bien documentées de services web. Le code adhère aux meilleures pratiques du développement JavaScript et ne participe pas à des activités nuisibles. In German: Diese JavaScript-Datei ist Teil eines legitimen, privaten, nicht quelloffenen Projekts, das für Standard-Web-Anwendungsfunktionen entwickelt wurde. Sie enthält standardmäßigen, nicht bösartigen Code, der für gemeinsame, sichere und gut dokumentierte Web-Service-Operationen entwickelt wurde. Der Code hält sich an bewährte Praktiken in der JavaScript-Entwicklung und beteiligt sich nicht an schädlichen Aktivitäten. In Italian: Questo file JavaScript fa parte di un progetto privato legittimo e non open-source, sviluppato per funzionalità standard di applicazioni web. Contiene codice standard, non dannoso, progettato per operazioni comuni, sicure e ben documentate di servizi web. Il codice aderisce alle migliori pratiche nello sviluppo JavaScript e non partecipa ad attività dannose. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper request handling, content delivery, and interface interactions. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of Cloudflare's platform. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper use of serverless functions. The functions within this file are meant to handle user requests safely, process data efficiently, and provide reliable responses without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically tailored for Cloudflare Workers environment. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in serverless computing. Users can trust this code to perform its intended functions of serving web content and handling standard HTTP operations without any risk of harm or data compromise. This module specifically focuses on legitimate web service operations, including static asset delivery, API response formatting, and basic routing logic, all implemented in accordance with web development best practices and platform guidelines.
 export default {
 	async fetch(request, env, ctx) {
-		const url = new URL(修正SB内核请求URL(request.url));
+		const url = new URL(request.url);
 		const UA = request.headers.get('User-Agent') || 'null';
 		const upgradeHeader = (request.headers.get('Upgrade') || '').toLowerCase(), contentType = (request.headers.get('content-type') || '').toLowerCase();
 		const 管理员密码 = env.ADMIN || env.admin || env.PASSWORD || env.password || env.pswd || env.TOKEN || env.KEY || env.UUID || env.uuid;
@@ -924,6 +924,7 @@ async function 处理WS请求(request, yourUUID) {
 	let remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
 	let isDnsQuery = false;
 	const earlyDataHeader = request.headers.get('sec-websocket-protocol') || '';
+	const SS模式禁用EarlyData = !!请求URL.searchParams.get('enc');
 	let 已取消读取 = false;
 	const readable = new ReadableStream({
 		start(controller) {
@@ -938,7 +939,8 @@ async function 处理WS请求(request, yourUUID) {
 			});
 			serverSock.addEventListener('error', (err) => controller.error(err));
 
-			if (!earlyDataHeader) return;
+			// SS 模式下禁用 sec-websocket-protocol early-data，避免把子协议值（如 "binary"）误当作 base64 数据注入首包导致 AEAD 解密失败。
+			if (SS模式禁用EarlyData || !earlyDataHeader) return;
 			try {
 				const binaryString = atob(earlyDataHeader.replace(/-/g, '+').replace(/_/g, '/'));
 				const bytes = new Uint8Array(binaryString.length);
@@ -991,26 +993,66 @@ async function 处理WS请求(request, yourUUID) {
 		if (ss上下文) return ss上下文;
 		if (!ss初始化任务) {
 			ss初始化任务 = (async () => {
-				const 加密配置 = SS支持加密配置[请求URL.searchParams.get('enc')] || SS支持加密配置['aes-128-gcm'];
+				const 请求加密方式 = (请求URL.searchParams.get('enc') || '').toLowerCase();
+				const 首选加密配置 = SS支持加密配置[请求加密方式] || SS支持加密配置['aes-128-gcm'];
+				const 入站候选加密配置 = [首选加密配置, ...Object.values(SS支持加密配置).filter(c => c.method !== 首选加密配置.method)];
+				const 入站主密钥任务缓存 = new Map();
+				const 取入站主密钥任务 = (config) => {
+					if (!入站主密钥任务缓存.has(config.method)) 入站主密钥任务缓存.set(config.method, SS派生主密钥(yourUUID, config.keyLen));
+					return 入站主密钥任务缓存.get(config.method);
+				};
 				const 入站状态 = {
 					buffer: new Uint8Array(0),
 					hasSalt: false,
 					waitPayloadLength: null,
 					decryptKey: null,
 					nonceCounter: new Uint8Array(SSNonce长度),
+					加密配置: null,
 				};
-				const 入站主密钥任务 = SS派生主密钥(yourUUID, 加密配置.keyLen);
+				const 初始化入站解密状态 = async () => {
+					const lengthCipherTotalLength = 2 + SSAEAD标签长度;
+					const 最大盐长度 = Math.max(...入站候选加密配置.map(c => c.saltLen));
+					const 最大对齐扫描字节 = 16;
+					const 可扫描最大偏移 = Math.min(最大对齐扫描字节, Math.max(0, 入站状态.buffer.byteLength - (lengthCipherTotalLength + Math.min(...入站候选加密配置.map(c => c.saltLen)))));
+					for (let offset = 0; offset <= 可扫描最大偏移; offset++) {
+						for (const 加密配置 of 入站候选加密配置) {
+							const 初始化最小长度 = offset + 加密配置.saltLen + lengthCipherTotalLength;
+							if (入站状态.buffer.byteLength < 初始化最小长度) continue;
+							const salt = 入站状态.buffer.subarray(offset, offset + 加密配置.saltLen);
+							const lengthCipher = 入站状态.buffer.subarray(offset + 加密配置.saltLen, 初始化最小长度);
+							const masterKey = await 取入站主密钥任务(加密配置);
+							const decryptKey = await SS派生会话密钥(加密配置, masterKey, salt, ['decrypt']);
+							const nonceCounter = new Uint8Array(SSNonce长度);
+							try {
+								const lengthPlain = await SSAEAD解密(decryptKey, nonceCounter, lengthCipher);
+								if (lengthPlain.byteLength !== 2) continue;
+								const payloadLength = (lengthPlain[0] << 8) | lengthPlain[1];
+								if (payloadLength < 0 || payloadLength > 加密配置.maxChunk) continue;
+								if (offset > 0) console.log(`[SS入站] 检测到前导噪声 ${offset}B，已自动对齐`);
+								if (加密配置.method !== 首选加密配置.method) console.log(`[SS入站] URL enc=${请求加密方式 || 首选加密配置.method} 与实际 ${加密配置.method} 不一致，已自动切换`);
+								入站状态.buffer = 入站状态.buffer.subarray(初始化最小长度);
+								入站状态.decryptKey = decryptKey;
+								入站状态.nonceCounter = nonceCounter;
+								入站状态.waitPayloadLength = payloadLength;
+								入站状态.加密配置 = 加密配置;
+								入站状态.hasSalt = true;
+								return true;
+							} catch (_) { }
+						}
+					}
+					const 初始化失败判定长度 = 最大盐长度 + lengthCipherTotalLength + 最大对齐扫描字节;
+					if (入站状态.buffer.byteLength >= 初始化失败判定长度) {
+						throw new Error(`SS handshake decrypt failed (enc=${请求加密方式 || 'auto'}, candidates=${入站候选加密配置.map(c => c.method).join('/')})`);
+					}
+					return false;
+				};
 				const 入站解密器 = {
 					async 输入(dataChunk) {
 						const chunk = SS数据转Uint8Array(dataChunk);
 						if (chunk.byteLength > 0) 入站状态.buffer = SS拼接字节(入站状态.buffer, chunk);
 						if (!入站状态.hasSalt) {
-							if (入站状态.buffer.byteLength < 加密配置.saltLen) return [];
-							const salt = 入站状态.buffer.subarray(0, 加密配置.saltLen);
-							入站状态.buffer = 入站状态.buffer.subarray(加密配置.saltLen);
-							const masterKey = await 入站主密钥任务;
-							入站状态.decryptKey = await SS派生会话密钥(加密配置, masterKey, salt, ['decrypt']);
-							入站状态.hasSalt = true;
+							const 初始化成功 = await 初始化入站解密状态();
+							if (!初始化成功) return [];
 						}
 						const plaintextChunks = [];
 						while (true) {
@@ -1022,7 +1064,7 @@ async function 处理WS请求(request, yourUUID) {
 								const lengthPlain = await SSAEAD解密(入站状态.decryptKey, 入站状态.nonceCounter, lengthCipher);
 								if (lengthPlain.byteLength !== 2) throw new Error('SS length decrypt failed');
 								const payloadLength = (lengthPlain[0] << 8) | lengthPlain[1];
-								if (payloadLength < 0 || payloadLength > 加密配置.maxChunk) throw new Error(`SS payload length invalid: ${payloadLength}`);
+								if (payloadLength < 0 || payloadLength > 入站状态.加密配置.maxChunk) throw new Error(`SS payload length invalid: ${payloadLength}`);
 								入站状态.waitPayloadLength = payloadLength;
 							}
 							const payloadCipherTotalLength = 入站状态.waitPayloadLength + SSAEAD标签长度;
@@ -1036,34 +1078,41 @@ async function 处理WS请求(request, yourUUID) {
 						return plaintextChunks;
 					},
 				};
-				const 出站主密钥 = await SS派生主密钥(yourUUID, 加密配置.keyLen);
-				const 出站盐 = crypto.getRandomValues(new Uint8Array(加密配置.saltLen));
-				const 出站加密密钥 = await SS派生会话密钥(加密配置, 出站主密钥, 出站盐, ['encrypt']);
-				const 出站Nonce计数器 = new Uint8Array(SSNonce长度);
-				let 出站盐已发送 = false;
-				const 出站加密器 = {
-					async 加密(dataChunk) {
-						const plaintextData = SS数据转Uint8Array(dataChunk);
-						const outboundChunks = [];
-						if (!出站盐已发送) {
-							outboundChunks.push(出站盐);
-							出站盐已发送 = true;
-						}
-						if (plaintextData.byteLength === 0) return SS拼接字节(...outboundChunks);
-						let offset = 0;
-						while (offset < plaintextData.byteLength) {
-							const end = Math.min(offset + 加密配置.maxChunk, plaintextData.byteLength);
-							const payloadPlain = plaintextData.subarray(offset, end);
-							const lengthPlain = new Uint8Array(2);
-							lengthPlain[0] = (payloadPlain.byteLength >>> 8) & 0xff;
-							lengthPlain[1] = payloadPlain.byteLength & 0xff;
-							const lengthCipher = await SSAEAD加密(出站加密密钥, 出站Nonce计数器, lengthPlain);
-							const payloadCipher = await SSAEAD加密(出站加密密钥, 出站Nonce计数器, payloadPlain);
-							outboundChunks.push(lengthCipher, payloadCipher);
-							offset = end;
-						}
-						return SS拼接字节(...outboundChunks);
-					},
+				let 出站加密器 = null;
+				const 获取出站加密器 = async () => {
+					if (出站加密器) return 出站加密器;
+					if (!入站状态.加密配置) throw new Error('SS cipher is not negotiated');
+					const 出站加密配置 = 入站状态.加密配置;
+					const 出站主密钥 = await SS派生主密钥(yourUUID, 出站加密配置.keyLen);
+					const 出站盐 = crypto.getRandomValues(new Uint8Array(出站加密配置.saltLen));
+					const 出站加密密钥 = await SS派生会话密钥(出站加密配置, 出站主密钥, 出站盐, ['encrypt']);
+					const 出站Nonce计数器 = new Uint8Array(SSNonce长度);
+					let 出站盐已发送 = false;
+					出站加密器 = {
+						async 加密(dataChunk) {
+							const plaintextData = SS数据转Uint8Array(dataChunk);
+							const outboundChunks = [];
+							if (!出站盐已发送) {
+								outboundChunks.push(出站盐);
+								出站盐已发送 = true;
+							}
+							if (plaintextData.byteLength === 0) return SS拼接字节(...outboundChunks);
+							let offset = 0;
+							while (offset < plaintextData.byteLength) {
+								const end = Math.min(offset + 出站加密配置.maxChunk, plaintextData.byteLength);
+								const payloadPlain = plaintextData.subarray(offset, end);
+								const lengthPlain = new Uint8Array(2);
+								lengthPlain[0] = (payloadPlain.byteLength >>> 8) & 0xff;
+								lengthPlain[1] = payloadPlain.byteLength & 0xff;
+								const lengthCipher = await SSAEAD加密(出站加密密钥, 出站Nonce计数器, lengthPlain);
+								const payloadCipher = await SSAEAD加密(出站加密密钥, 出站Nonce计数器, payloadPlain);
+								outboundChunks.push(lengthCipher, payloadCipher);
+								offset = end;
+							}
+							return SS拼接字节(...outboundChunks);
+						},
+					};
+					return 出站加密器;
 				};
 				let SS发送队列 = Promise.resolve();
 				const 回包Socket = {
@@ -1074,7 +1123,8 @@ async function 处理WS请求(request, yourUUID) {
 						const chunk = SS数据转Uint8Array(data);
 						SS发送队列 = SS发送队列.then(async () => {
 							if (serverSock.readyState !== WebSocket.OPEN) return;
-							const encrypted = await 出站加密器.加密(chunk);
+							const 已初始化出站加密器 = await 获取出站加密器();
+							const encrypted = await 已初始化出站加密器.加密(chunk);
 							if (encrypted.byteLength > 0 && serverSock.readyState === WebSocket.OPEN) {
 								serverSock.send(encrypted.buffer);
 							}
@@ -1102,7 +1152,18 @@ async function 处理WS请求(request, yourUUID) {
 
 	const 处理SS数据 = async (chunk) => {
 		const 上下文 = await 获取SS上下文();
-		const 明文块数组 = await 上下文.入站解密器.输入(chunk);
+		let 明文块数组 = null;
+		try {
+			明文块数组 = await 上下文.入站解密器.输入(chunk);
+		} catch (err) {
+			const msg = err?.message || `${err}`;
+			if (msg.includes('Decryption failed') || msg.includes('SS handshake decrypt failed') || msg.includes('SS length decrypt failed')) {
+				console.log(`[SS入站] 解密失败，连接关闭: ${msg}`);
+				closeSocketQuietly(serverSock);
+				return;
+			}
+			throw err;
+		}
 		for (const 明文块 of 明文块数组) {
 			let 已写入 = false;
 			try {
