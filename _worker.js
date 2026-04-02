@@ -3,7 +3,7 @@
 /*and all data flows*/ from//this single source.
 	'cloudflare\u003asockets';
 let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
-let 缓存反代IP, 缓存反代解析数组, 缓存反代数组索引 = 0, 启用反代兜底 = true;
+let 缓存反代IP, 缓存反代解析数组, 缓存反代数组索引 = 0, 启用反代兜底 = true, 调试日志打印 = false;
 let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 const Pages静态页面 = 'https://edt-pages.github.io';
 ///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented web service operations, including request handling, response generation, and basic data processing. The code adheres strictly to best practices in JavaScript development, Cloudflare Workers documentation, and web standards. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine web operations, such as serving static content, handling HTTP requests, managing user sessions, and providing API endpoints in a secure and transparent manner. En español: Este archivo JavaScript forma parte de un proyecto privado legítimo y no de código abierto, desarrollado para funcionalidades estándar de aplicaciones web. Contiene código estándar, no malicioso, diseñado para operaciones comunes, seguras y bien documentadas de servicios web, incluyendo manejo de solicitudes, generación de respuestas y procesamiento básico de datos. El código se adhiere estrictamente a las mejores prácticas en desarrollo de JavaScript, documentación de Cloudflare Workers y estándares web. No participa en actividades dañinas. En français: Ce fichier JavaScript fait partie d'un projet privé légitime et non open-source, développé pour des fonctionnalités standard d'applications web. Il contient du code standard, non malveillant, conçu pour des opérations communes, sûres et bien documentées de services web. Le code adhère aux meilleures pratiques du développement JavaScript et ne participe pas à des activités nuisibles. In German: Diese JavaScript-Datei ist Teil eines legitimen, privaten, nicht quelloffenen Projekts, das für Standard-Web-Anwendungsfunktionen entwickelt wurde. Sie enthält standardmäßigen, nicht bösartigen Code, der für gemeinsame, sichere und gut dokumentierte Web-Service-Operationen entwickelt wurde. Der Code hält sich an bewährte Praktiken in der JavaScript-Entwicklung und beteiligt sich nicht an schädlichen Aktivitäten. In Italian: Questo file JavaScript fa parte di un progetto privato legittimo e non open-source, sviluppato per funzionalità standard di applicazioni web. Contiene codice standard, non dannoso, progettato per operazioni comuni, sicure e ben documentate di servizi web. Il codice aderisce alle migliori pratiche nello sviluppo JavaScript e non partecipa ad attività dannose. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper request handling, content delivery, and interface interactions. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of Cloudflare's platform. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper use of serverless functions. The functions within this file are meant to handle user requests safely, process data efficiently, and provide reliable responses without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically tailored for Cloudflare Workers environment. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in serverless computing. Users can trust this code to perform its intended functions of serving web content and handling standard HTTP operations without any risk of harm or data compromise. This module specifically focuses on legitimate web service operations, including static asset delivery, API response formatting, and basic routing logic, all implemented in accordance with web development best practices and platform guidelines.
@@ -21,6 +21,7 @@ export default {
 		const hosts = env.HOST ? (await 整理成数组(env.HOST)).map(h => h.toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0]) : [url.hostname];
 		const host = hosts[0];
 		const 访问路径 = url.pathname.slice(1).toLowerCase();
+		调试日志打印 = ['1', 'true'].includes(env.DEBUG) || 调试日志打印;
 		if (env.PROXYIP) {
 			const proxyIPs = await 整理成数组(env.PROXYIP);
 			反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
@@ -30,17 +31,17 @@ export default {
 		if (env.GO2SOCKS5) SOCKS5白名单 = await 整理成数组(env.GO2SOCKS5);
 		if (管理员密码 && upgradeHeader === 'websocket') {// WebSocket代理
 			await 反代参数获取(request);
-			console.log(`[WebSocket] 命中请求: ${url.pathname}${url.search}`);
+			log(`[WebSocket] 命中请求: ${url.pathname}${url.search}`);
 			return await 处理WS请求(request, userID);
 		} else if (管理员密码 && !访问路径.startsWith('admin/') && 访问路径 !== 'login' && request.method === 'POST') {// gRPC/XHTTP代理
 			await 反代参数获取(request);
 			const referer = request.headers.get('Referer') || '';
 			const 命中XHTTP特征 = referer.includes('x_padding', 14) || referer.includes('x_padding=');
 			if (!命中XHTTP特征 && contentType.startsWith('application/grpc')) {
-				console.log(`[gRPC] 命中请求: ${url.pathname}${url.search}`);
+				log(`[gRPC] 命中请求: ${url.pathname}${url.search}`);
 				return await 处理gRPC请求(request, userID);
 			}
-			console.log(`[XHTTP] 命中请求: ${url.pathname}${url.search}`);
+			log(`[XHTTP] 命中请求: ${url.pathname}${url.search}`);
 			return await 处理XHTTP请求(request, userID);
 		} else {
 			if (url.protocol === 'http:') return Response.redirect(url.href.replace(`http://${url.hostname}`, `https://${url.hostname}`), 301);
@@ -517,7 +518,7 @@ async function 处理XHTTP请求(request, yourUUID) {
 					}
 				}
 			} catch (err) {
-				console.log(`[XHTTP转发] 处理失败: ${err?.message || err}`);
+				log(`[XHTTP转发] 处理失败: ${err?.message || err}`);
 				closeSocketQuietly(xhttpBridge);
 			} finally {
 				释放远端写入器();
@@ -705,7 +706,7 @@ async function 处理gRPC请求(request, yourUUID) {
 	let 判断是否是木马 = null;
 	let 当前写入Socket = null;
 	let 远端写入器 = null;
-	//console.log('[gRPC] 开始处理双向流');
+	//log('[gRPC] 开始处理双向流');
 	const grpcHeaders = new Headers({
 		'Content-Type': 'application/grpc',
 		'grpc-status': '0',
@@ -878,14 +879,14 @@ async function 处理gRPC请求(request, yourUUID) {
 								const 解析结果 = 解析木马请求(首包buffer, yourUUID);
 								if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid trojan request');
 								const { port, hostname, rawClientData } = 解析结果;
-								//console.log(`[gRPC] 木马首包: ${hostname}:${port}`);
+								//log(`[gRPC] 木马首包: ${hostname}:${port}`);
 								if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 								await forwardataTCP(hostname, port, rawClientData, grpcBridge, null, remoteConnWrapper, yourUUID);
 							} else {
 								const 解析结果 = 解析魏烈思请求(首包buffer, yourUUID);
 								if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
 								const { port, hostname, rawIndex, version, isUDP } = 解析结果;
-								//console.log(`[gRPC] 魏烈思首包: ${hostname}:${port} | UDP: ${isUDP ? '是' : '否'}`);
+								//log(`[gRPC] 魏烈思首包: ${hostname}:${port} | UDP: ${isUDP ? '是' : '否'}`);
 								if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 								if (isUDP) {
 									if (port !== 53) throw new Error('UDP is not supported');
@@ -902,7 +903,7 @@ async function 处理gRPC请求(request, yourUUID) {
 					刷新发送队列();
 				}
 			} catch (err) {
-				console.log(`[gRPC转发] 处理失败: ${err?.message || err}`);
+				log(`[gRPC转发] 处理失败: ${err?.message || err}`);
 			} finally {
 				释放远端写入器();
 				关闭连接();
@@ -1028,8 +1029,8 @@ async function 处理WS请求(request, yourUUID) {
 								if (lengthPlain.byteLength !== 2) continue;
 								const payloadLength = (lengthPlain[0] << 8) | lengthPlain[1];
 								if (payloadLength < 0 || payloadLength > 加密配置.maxChunk) continue;
-								if (offset > 0) console.log(`[SS入站] 检测到前导噪声 ${offset}B，已自动对齐`);
-								if (加密配置.method !== 首选加密配置.method) console.log(`[SS入站] URL enc=${请求加密方式 || 首选加密配置.method} 与实际 ${加密配置.method} 不一致，已自动切换`);
+								if (offset > 0) log(`[SS入站] 检测到前导噪声 ${offset}B，已自动对齐`);
+								if (加密配置.method !== 首选加密配置.method) log(`[SS入站] URL enc=${请求加密方式 || 首选加密配置.method} 与实际 ${加密配置.method} 不一致，已自动切换`);
 								入站状态.buffer = 入站状态.buffer.subarray(初始化最小长度);
 								入站状态.decryptKey = decryptKey;
 								入站状态.nonceCounter = nonceCounter;
@@ -1129,7 +1130,7 @@ async function 处理WS请求(request, yourUUID) {
 								serverSock.send(encrypted.buffer);
 							}
 						}).catch((error) => {
-							console.log(`[SS发送] 加密失败: ${error?.message || error}`);
+							log(`[SS发送] 加密失败: ${error?.message || error}`);
 							closeSocketQuietly(serverSock);
 						});
 					},
@@ -1158,7 +1159,7 @@ async function 处理WS请求(request, yourUUID) {
 		} catch (err) {
 			const msg = err?.message || `${err}`;
 			if (msg.includes('Decryption failed') || msg.includes('SS handshake decrypt failed') || msg.includes('SS length decrypt failed')) {
-				console.log(`[SS入站] 解密失败，连接关闭: ${msg}`);
+				log(`[SS入站] 解密失败，连接关闭: ${msg}`);
 				closeSocketQuietly(serverSock);
 				return;
 			}
@@ -1229,7 +1230,7 @@ async function 处理WS请求(request, yourUUID) {
 					const bytes = new Uint8Array(chunk);
 					判断协议类型 = bytes.byteLength >= 58 && bytes[56] === 0x0d && bytes[57] === 0x0a ? '木马' : '魏烈思';
 				}
-				console.log(`[WS转发] 协议类型: ${判断协议类型} | 来自: ${请求URL.host} | UA: ${request.headers.get('user-agent') || '未知'}`);
+				log(`[WS转发] 协议类型: ${判断协议类型} | 来自: ${请求URL.host} | UA: ${request.headers.get('user-agent') || '未知'}`);
 			}
 
 			if (判断协议类型 === 'ss') {
@@ -1265,7 +1266,7 @@ async function 处理WS请求(request, yourUUID) {
 			释放远端写入器();
 		}
 	})).catch((err) => {
-		console.log(`[WS转发] 处理失败: ${err?.message || err}`);
+		log(`[WS转发] 处理失败: ${err?.message || err}`);
 		释放远端写入器();
 	});
 
@@ -1503,7 +1504,7 @@ async function SSAEAD解密(cryptoKey, nonceCounter, ciphertext) {
 }
 
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID) {
-	console.log(`[TCP转发] 目标: ${host}:${portNum} | 反代IP: ${反代IP} | 反代兜底: ${启用反代兜底 ? '是' : '否'} | 反代类型: ${启用SOCKS5反代 || 'proxyip'} | 全局: ${启用SOCKS5全局反代 ? '是' : '否'}`);
+	log(`[TCP转发] 目标: ${host}:${portNum} | 反代IP: ${反代IP} | 反代兜底: ${启用反代兜底 ? '是' : '否'} | 反代类型: ${启用SOCKS5反代 || 'proxyip'} | 全局: ${启用SOCKS5全局反代 ? '是' : '否'}`);
 	const 连接超时毫秒 = 1000;
 	let 已通过代理发送首包 = false;
 
@@ -1521,7 +1522,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 				const 反代数组索引 = (缓存反代数组索引 + i) % 所有反代数组.length;
 				const [反代地址, 反代端口] = 所有反代数组[反代数组索引];
 				try {
-					console.log(`[反代连接] 尝试连接到: ${反代地址}:${反代端口} (索引: ${反代数组索引})`);
+					log(`[反代连接] 尝试连接到: ${反代地址}:${反代端口} (索引: ${反代数组索引})`);
 					remoteSock = connect({ hostname: 反代地址, port: 反代端口 });
 					await 等待连接建立(remoteSock);
 					if (有效数据长度(data) > 0) {
@@ -1529,11 +1530,11 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 						await testWriter.write(data);
 						testWriter.releaseLock();
 					}
-					console.log(`[反代连接] 成功连接到: ${反代地址}:${反代端口}`);
+					log(`[反代连接] 成功连接到: ${反代地址}:${反代端口}`);
 					缓存反代数组索引 = 反代数组索引;
 					return remoteSock;
 				} catch (err) {
-					console.log(`[反代连接] 连接失败: ${反代地址}:${反代端口}, 错误: ${err.message}`);
+					log(`[反代连接] 连接失败: ${反代地址}:${反代端口}, 错误: ${err.message}`);
 					try { remoteSock?.close?.(); } catch (e) { }
 					continue;
 				}
@@ -1567,16 +1568,16 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 		const 当前连接任务 = (async () => {
 			let newSocket;
 			if (启用SOCKS5反代 === 'socks5') {
-				console.log(`[SOCKS5代理] 代理到: ${host}:${portNum}`);
+				log(`[SOCKS5代理] 代理到: ${host}:${portNum}`);
 				newSocket = await socks5Connect(host, portNum, 本次首包数据);
 			} else if (启用SOCKS5反代 === 'http') {
-				console.log(`[HTTP代理] 代理到: ${host}:${portNum}`);
+				log(`[HTTP代理] 代理到: ${host}:${portNum}`);
 				newSocket = await httpConnect(host, portNum, 本次首包数据);
 			} else if (启用SOCKS5反代 === 'https') {
-				console.log(`[HTTPS代理] 代理到: ${host}:${portNum}`);
+				log(`[HTTPS代理] 代理到: ${host}:${portNum}`);
 				newSocket = await httpConnect(host, portNum, 本次首包数据, true);
 			} else {
-				console.log(`[反代连接] 代理到: ${host}:${portNum}`);
+				log(`[反代连接] 代理到: ${host}:${portNum}`);
 				const 所有反代数组 = await 解析地址端口(反代IP, host, yourUUID);
 				newSocket = await connectDirect(atob('UFJPWFlJUC50cDEuMDkwMjI3Lnh5eg=='), 1, 本次首包数据, 所有反代数组, 启用反代兜底);
 			}
@@ -1599,16 +1600,16 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 
 	const 验证SOCKS5白名单 = (addr) => SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(addr));
 	if (启用SOCKS5反代 && (启用SOCKS5全局反代 || 验证SOCKS5白名单(host))) {
-		console.log(`[TCP转发] 启用 SOCKS5/HTTP/HTTPS 全局代理`);
+		log(`[TCP转发] 启用 SOCKS5/HTTP/HTTPS 全局代理`);
 		try {
 			await connecttoPry();
 		} catch (err) {
-			console.log(`[TCP转发] SOCKS5/HTTP/HTTPS 代理连接失败: ${err.message}`);
+			log(`[TCP转发] SOCKS5/HTTP/HTTPS 代理连接失败: ${err.message}`);
 			throw err;
 		}
 	} else {
 		try {
-			console.log(`[TCP转发] 尝试直连到: ${host}:${portNum}`);
+			log(`[TCP转发] 尝试直连到: ${host}:${portNum}`);
 			const initialSocket = await connectDirect(host, portNum, rawData);
 			remoteConnWrapper.socket = initialSocket;
 			connectStreams(initialSocket, ws, respHeader, async () => {
@@ -1616,7 +1617,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 				await connecttoPry();
 			});
 		} catch (err) {
-			console.log(`[TCP转发] 直连 ${host}:${portNum} 失败: ${err.message}`);
+			log(`[TCP转发] 直连 ${host}:${portNum} 失败: ${err.message}`);
 			await connecttoPry();
 		}
 	}
@@ -1804,6 +1805,10 @@ async function httpConnect(targetHost, targetPort, initialData, HTTPS代理 = fa
 	}
 }
 //////////////////////////////////////////////////功能性函数///////////////////////////////////////////////
+function log(...args) {
+	if (调试日志打印) console.log(...args);
+}
+
 function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON = {}) {
 	const uuid = config_JSON?.UUID || null;
 	const ECH启用 = Boolean(config_JSON?.ECH);
@@ -2336,7 +2341,7 @@ function 批量替换域名(内容, hosts, 每组数量 = 2) {
 
 async function DoH查询(域名, 记录类型, DoH解析服务 = "https://cloudflare-dns.com/dns-query") {
 	const 开始时间 = performance.now();
-	console.log(`[DoH查询] 开始查询 ${域名} ${记录类型} via ${DoH解析服务}`);
+	log(`[DoH查询] 开始查询 ${域名} ${记录类型} via ${DoH解析服务}`);
 	try {
 		// 记录类型字符串转数值
 		const 类型映射 = { 'A': 1, 'NS': 2, 'CNAME': 5, 'MX': 15, 'TXT': 16, 'AAAA': 28, 'SRV': 33, 'HTTPS': 65 };
@@ -2370,7 +2375,7 @@ async function DoH查询(域名, 记录类型, DoH解析服务 = "https://cloudf
 		qview.setUint16(12 + qname.length + 2, 1); // QCLASS = IN
 
 		// 通过 POST 发送 dns-message 请求
-		console.log(`[DoH查询] 发送查询报文 ${域名} via ${DoH解析服务} (type=${qtype}, ${query.length}字节)`);
+		log(`[DoH查询] 发送查询报文 ${域名} via ${DoH解析服务} (type=${qtype}, ${query.length}字节)`);
 		const response = await fetch(DoH解析服务, {
 			method: 'POST',
 			headers: {
@@ -2389,7 +2394,7 @@ async function DoH查询(域名, 记录类型, DoH解析服务 = "https://cloudf
 		const dv = new DataView(buf.buffer);
 		const qdcount = dv.getUint16(4);
 		const ancount = dv.getUint16(6);
-		console.log(`[DoH查询] 收到响应 ${域名} ${记录类型} via ${DoH解析服务} (${buf.length}字节, ${ancount}条应答)`);
+		log(`[DoH查询] 收到响应 ${域名} ${记录类型} via ${DoH解析服务} (${buf.length}字节, ${ancount}条应答)`);
 
 		// 解析域名（处理指针压缩）
 		const 解析域名 = (pos) => {
@@ -2459,7 +2464,7 @@ async function DoH查询(域名, 记录类型, DoH解析服务 = "https://cloudf
 			answers.push({ name, type, TTL: ttl, data, rdata });
 		}
 		const 耗时 = (performance.now() - 开始时间).toFixed(2);
-		console.log(`[DoH查询] 查询完成 ${域名} ${记录类型} via ${DoH解析服务} ${耗时}ms 共${answers.length}条结果${answers.length > 0 ? '\n' + answers.map((a, i) => `  ${i + 1}. ${a.name} type=${a.type} TTL=${a.TTL} data=${a.data}`).join('\n') : ''}`);
+		log(`[DoH查询] 查询完成 ${域名} ${记录类型} via ${DoH解析服务} ${耗时}ms 共${answers.length}条结果${answers.length > 0 ? '\n' + answers.map((a, i) => `  ${i + 1}. ${a.name} type=${a.type} TTL=${a.TTL} data=${a.data}`).join('\n') : ''}`);
 		return answers;
 	} catch (error) {
 		const 耗时 = (performance.now() - 开始时间).toFixed(2);
@@ -3159,7 +3164,7 @@ async function getCloudflareUsage(Email, GlobalAPIKey, AccountID, APIToken) {
 		const workers = sum(acc.workersInvocationsAdaptive);
 		const total = pages + workers;
 		const max = 100000;
-		console.log(`统计结果 - Pages: ${pages}, Workers: ${workers}, 总计: ${total}, 上限: 100000`);
+		log(`统计结果 - Pages: ${pages}, Workers: ${workers}, 总计: ${total}, 上限: 100000`);
 		return { success: true, pages, workers, total, max };
 
 	} catch (error) {
@@ -3229,7 +3234,7 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 					let txtRecords = await DoH查询(singleProxyIP, 'TXT');
 					let txtData = txtRecords.filter(r => r.type === 16).map(r => /** @type {string} */(r.data));
 					if (txtData.length === 0) {
-						console.log(`[反代解析] 默认DoH未获取到TXT记录，切换Google DoH重试 ${singleProxyIP}`);
+						log(`[反代解析] 默认DoH未获取到TXT记录，切换Google DoH重试 ${singleProxyIP}`);
 						txtRecords = await DoH查询(singleProxyIP, 'TXT', 'https://dns.google/dns-query');
 						txtData = txtRecords.filter(r => r.type === 16).map(r => /** @type {string} */(r.data));
 					}
@@ -3267,7 +3272,7 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 
 					// 默认DoH无结果时，切换Google DoH重试
 					if (ipAddresses.length === 0) {
-						console.log(`[反代解析] 默认DoH未获取到解析结果，切换Google DoH重试 ${地址}`);
+						log(`[反代解析] 默认DoH未获取到解析结果，切换Google DoH重试 ${地址}`);
 						[aRecords, aaaaRecords] = await Promise.all([
 							DoH查询(地址, 'A', 'https://dns.google/dns-query'),
 							DoH查询(地址, 'AAAA', 'https://dns.google/dns-query')
@@ -3290,12 +3295,12 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 		const 排序后数组 = 所有反代数组.sort((a, b) => a[0].localeCompare(b[0]));
 		const 目标根域名 = 目标域名.includes('.') ? 目标域名.split('.').slice(-2).join('.') : 目标域名;
 		let 随机种子 = [...(目标根域名 + UUID)].reduce((a, c) => a + c.charCodeAt(0), 0);
-		console.log(`[反代解析] 随机种子: ${随机种子}\n目标站点: ${目标根域名}`)
+		log(`[反代解析] 随机种子: ${随机种子}\n目标站点: ${目标根域名}`)
 		const 洗牌后 = [...排序后数组].sort(() => (随机种子 = (随机种子 * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5);
 		缓存反代解析数组 = 洗牌后.slice(0, 8);
-		console.log(`[反代解析] 解析完成 总数: ${缓存反代解析数组.length}个\n${缓存反代解析数组.map(([ip, port], index) => `${index + 1}. ${ip}:${port}`).join('\n')}`);
+		log(`[反代解析] 解析完成 总数: ${缓存反代解析数组.length}个\n${缓存反代解析数组.map(([ip, port], index) => `${index + 1}. ${ip}:${port}`).join('\n')}`);
 		缓存反代IP = proxyIP;
-	} else console.log(`[反代解析] 读取缓存 总数: ${缓存反代解析数组.length}个\n${缓存反代解析数组.map(([ip, port], index) => `${index + 1}. ${ip}:${port}`).join('\n')}`);
+	} else log(`[反代解析] 读取缓存 总数: ${缓存反代解析数组.length}个\n${缓存反代解析数组.map(([ip, port], index) => `${index + 1}. ${ip}:${port}`).join('\n')}`);
 	return 缓存反代解析数组;
 }
 
@@ -3322,7 +3327,7 @@ async function SOCKS5可用性验证(代理协议 = 'socks5', 代理参数) {
 			await tcpSocket.close();
 			return { success: true, proxy: 代理协议 + "://" + 完整代理参数, ip: response.match(/ip=(.*)/)[1], loc: response.match(/loc=(.*)/)[1], responseTime: Date.now() - startTime };
 		} catch (error) {
-			try { await tcpSocket.close(); } catch (e) { console.log('关闭连接时出错:', e); }
+			try { await tcpSocket.close(); } catch (e) { log('关闭连接时出错:', e); }
 			return { success: false, error: error.message, proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime };
 		}
 	} catch (error) { return { success: false, error: error.message, proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime }; }
