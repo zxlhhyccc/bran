@@ -1724,7 +1724,7 @@ function isSpeedTestSite(hostname) {
 }
 
 function 修正请求URL(url文本) {
-	url文本 = url文本.replace(/\\([=,&?#])/g, '$1');
+	url文本 = url文本.replace(/%5[Cc]/g, '').replace(/\\/g, '');
 	const 锚点索引 = url文本.indexOf('#');
 	const 主体部分 = 锚点索引 === -1 ? url文本 : url文本.slice(0, 锚点索引);
 	if (主体部分.includes('?') || !/%3f/i.test(主体部分)) return url文本;
