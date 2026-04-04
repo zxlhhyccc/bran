@@ -1,4 +1,4 @@
-﻿const Version = '2026-04-03 18:32:32';
+﻿const Version = '2026-04-04 18:26:17';
 /*In our project workflow, we first*/ import //the necessary modules, 
 /*then*/ { connect }//to the central server, 
 /*and all data flows*/ from//this single source.
@@ -1083,6 +1083,7 @@ async function 处理WS请求(request, yourUUID) {
 					},
 				};
 				let 出站加密器 = null;
+				const SS单批最大字节 = 32 * 1024;
 				const 获取出站加密器 = async () => {
 					if (出站加密器) return 出站加密器;
 					if (!入站状态.加密配置) throw new Error('SS cipher is not negotiated');
@@ -1093,14 +1094,13 @@ async function 处理WS请求(request, yourUUID) {
 					const 出站Nonce计数器 = new Uint8Array(SSNonce长度);
 					let 出站盐已发送 = false;
 					出站加密器 = {
-						async 加密(dataChunk) {
+						async 加密并发送(dataChunk, sendChunk) {
 							const plaintextData = SS数据转Uint8Array(dataChunk);
-							const outboundChunks = [];
 							if (!出站盐已发送) {
-								outboundChunks.push(出站盐);
+								sendChunk(出站盐);
 								出站盐已发送 = true;
 							}
-							if (plaintextData.byteLength === 0) return SS拼接字节(...outboundChunks);
+							if (plaintextData.byteLength === 0) return;
 							let offset = 0;
 							while (offset < plaintextData.byteLength) {
 								const end = Math.min(offset + 出站加密配置.maxChunk, plaintextData.byteLength);
@@ -1110,32 +1110,45 @@ async function 处理WS请求(request, yourUUID) {
 								lengthPlain[1] = payloadPlain.byteLength & 0xff;
 								const lengthCipher = await SSAEAD加密(出站加密密钥, 出站Nonce计数器, lengthPlain);
 								const payloadCipher = await SSAEAD加密(出站加密密钥, 出站Nonce计数器, payloadPlain);
-								outboundChunks.push(lengthCipher, payloadCipher);
+								const frame = new Uint8Array(lengthCipher.byteLength + payloadCipher.byteLength);
+								frame.set(lengthCipher, 0);
+								frame.set(payloadCipher, lengthCipher.byteLength);
+								sendChunk(frame);
 								offset = end;
 							}
-							return SS拼接字节(...outboundChunks);
 						},
 					};
 					return 出站加密器;
 				};
 				let SS发送队列 = Promise.resolve();
+				const SS入队发送 = (chunk) => {
+					SS发送队列 = SS发送队列.then(async () => {
+						if (serverSock.readyState !== WebSocket.OPEN) return;
+						const 已初始化出站加密器 = await 获取出站加密器();
+						await 已初始化出站加密器.加密并发送(chunk, (encryptedChunk) => {
+							if (encryptedChunk.byteLength > 0 && serverSock.readyState === WebSocket.OPEN) {
+								serverSock.send(encryptedChunk.buffer);
+							}
+						});
+					}).catch((error) => {
+						log(`[SS发送] 加密失败: ${error?.message || error}`);
+						closeSocketQuietly(serverSock);
+					});
+					return SS发送队列;
+				};
 				const 回包Socket = {
 					get readyState() {
 						return serverSock.readyState;
 					},
 					send(data) {
 						const chunk = SS数据转Uint8Array(data);
-						SS发送队列 = SS发送队列.then(async () => {
-							if (serverSock.readyState !== WebSocket.OPEN) return;
-							const 已初始化出站加密器 = await 获取出站加密器();
-							const encrypted = await 已初始化出站加密器.加密(chunk);
-							if (encrypted.byteLength > 0 && serverSock.readyState === WebSocket.OPEN) {
-								serverSock.send(encrypted.buffer);
-							}
-						}).catch((error) => {
-							log(`[SS发送] 加密失败: ${error?.message || error}`);
-							closeSocketQuietly(serverSock);
-						});
+						if (chunk.byteLength <= SS单批最大字节) {
+							return SS入队发送(chunk);
+						}
+						for (let i = 0; i < chunk.byteLength; i += SS单批最大字节) {
+							SS入队发送(chunk.subarray(i, Math.min(i + SS单批最大字节, chunk.byteLength)));
+						}
+						return SS发送队列;
 					},
 					close() {
 						closeSocketQuietly(serverSock);
@@ -1667,6 +1680,10 @@ function formatIdentifier(arr, offset = 0) {
 }
 async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 	let header = headerData, hasData = false;
+	const 发送并等待 = async (payload) => {
+		const sendResult = webSocket.send(payload);
+		if (sendResult && typeof sendResult.then === 'function') await sendResult;
+	};
 	await remoteSocket.readable.pipeTo(
 		new WritableStream({
 			async write(chunk, controller) {
@@ -1676,10 +1693,10 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 					const response = new Uint8Array(header.length + chunk.byteLength);
 					response.set(header, 0);
 					response.set(chunk, header.length);
-					webSocket.send(response.buffer);
+					await 发送并等待(response.buffer);
 					header = null;
 				} else {
-					webSocket.send(chunk);
+					await 发送并等待(chunk);
 				}
 			},
 			abort() { },
