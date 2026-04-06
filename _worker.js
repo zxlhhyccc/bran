@@ -2757,12 +2757,12 @@ async function 生成随机IP(request, count = 16, 指定端口 = -1, TLS = true
 	const TLS端口 = [443, 2053, 2083, 2087, 2096, 8443];
 	const NOTLS端口 = [80, 2052, 2082, 2086, 2095, 8080];
 
-	const randomIPs = Array.from({ length: count }, () => {
+	const randomIPs = Array.from({ length: count }, (_, index) => {
 		const ip = generateRandomIPFromCIDR(cidrList[Math.floor(Math.random() * cidrList.length)]);
 		const 目标端口 = 指定端口 === -1
 			? cfport[Math.floor(Math.random() * cfport.length)]
 			: (TLS ? 指定端口 : (NOTLS端口[TLS端口.indexOf(Number(指定端口))] ?? 指定端口));
-		return `${ip}:${目标端口}#${cfname}`;
+		return `${ip}:${目标端口}#${cfname}${index + 1}`;
 	});
 	return [randomIPs, randomIPs.join('\n')];
 }
