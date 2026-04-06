@@ -1425,28 +1425,13 @@ function 解析魏烈思请求(chunk, token) {
 }
 
 const SS支持加密配置 = {
-	'aes-128-gcm': {
-		method: 'aes-128-gcm',
-		keyLen: 16,
-		saltLen: 16,
-		maxChunk: 0x3fff,
-		aesLength: 128,
-	},
-	'aes-256-gcm': {
-		method: 'aes-256-gcm',
-		keyLen: 32,
-		saltLen: 32,
-		maxChunk: 0x3fff,
-		aesLength: 256,
-	},
+	'aes-128-gcm': { method: 'aes-128-gcm', keyLen: 16, saltLen: 16, maxChunk: 0x3fff, aesLength: 128 },
+	'aes-256-gcm': { method: 'aes-256-gcm', keyLen: 32, saltLen: 32, maxChunk: 0x3fff, aesLength: 256 },
 };
 
-const SSAEAD标签长度 = 16;
-const SSNonce长度 = 12;
+const SSAEAD标签长度 = 16, SSNonce长度 = 12;
 const SS子密钥信息 = new TextEncoder().encode('ss-subkey');
-const SS文本编码器 = new TextEncoder();
-const SS文本解码器 = new TextDecoder();
-const SS主密钥缓存 = new Map();
+const SS文本编码器 = new TextEncoder(), SS文本解码器 = new TextDecoder(), SS主密钥缓存 = new Map();
 
 function SS数据转Uint8Array(data) {
 	if (data instanceof Uint8Array) return data;
@@ -1458,105 +1443,65 @@ function SS数据转Uint8Array(data) {
 function SS拼接字节(...chunkList) {
 	if (!chunkList || chunkList.length === 0) return new Uint8Array(0);
 	const chunks = chunkList.map(SS数据转Uint8Array);
-	const totalLength = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-	const result = new Uint8Array(totalLength);
+	const total = chunks.reduce((sum, c) => sum + c.byteLength, 0);
+	const result = new Uint8Array(total);
 	let offset = 0;
-	for (const chunk of chunks) {
-		result.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
+	for (const c of chunks) { result.set(c, offset); offset += c.byteLength }
 	return result;
 }
 
 function SS递增Nonce计数器(counter) {
-	for (let i = 0; i < counter.length; i++) {
-		counter[i] = (counter[i] + 1) & 0xff;
-		if (counter[i] !== 0) return;
-	}
+	for (let i = 0; i < counter.length; i++) { counter[i] = (counter[i] + 1) & 0xff; if (counter[i] !== 0) return }
 }
 
 async function SS派生主密钥(passwordText, keyLen) {
 	const cacheKey = `${keyLen}:${passwordText}`;
 	if (SS主密钥缓存.has(cacheKey)) return SS主密钥缓存.get(cacheKey);
 	const deriveTask = (async () => {
-		const passwordBytes = SS文本编码器.encode(passwordText || '');
-		let previous = new Uint8Array(0);
-		let result = new Uint8Array(0);
+		const pwBytes = SS文本编码器.encode(passwordText || '');
+		let prev = new Uint8Array(0), result = new Uint8Array(0);
 		while (result.byteLength < keyLen) {
-			const input = new Uint8Array(previous.byteLength + passwordBytes.byteLength);
-			input.set(previous, 0);
-			input.set(passwordBytes, previous.byteLength);
-			previous = new Uint8Array(await crypto.subtle.digest('MD5', input));
-			result = SS拼接字节(result, previous);
+			const input = new Uint8Array(prev.byteLength + pwBytes.byteLength);
+			input.set(prev, 0); input.set(pwBytes, prev.byteLength);
+			prev = new Uint8Array(await crypto.subtle.digest('MD5', input));
+			result = SS拼接字节(result, prev);
 		}
 		return result.slice(0, keyLen);
 	})();
 	SS主密钥缓存.set(cacheKey, deriveTask);
-	try {
-		return await deriveTask;
-	} catch (error) {
-		SS主密钥缓存.delete(cacheKey);
-		throw error;
-	}
+	try { return await deriveTask }
+	catch (error) { SS主密钥缓存.delete(cacheKey); throw error }
 }
 
 async function SS派生会话密钥(config, masterKey, salt, usages) {
-	const saltHmacKey = await crypto.subtle.importKey(
-		'raw',
-		salt,
-		{ name: 'HMAC', hash: 'SHA-1' },
-		false,
-		['sign'],
-	);
+	const hmacOpts = { name: 'HMAC', hash: 'SHA-1' };
+	const saltHmacKey = await crypto.subtle.importKey('raw', salt, hmacOpts, false, ['sign']);
 	const prk = new Uint8Array(await crypto.subtle.sign('HMAC', saltHmacKey, masterKey));
-	const prkHmacKey = await crypto.subtle.importKey(
-		'raw',
-		prk,
-		{ name: 'HMAC', hash: 'SHA-1' },
-		false,
-		['sign'],
-	);
+	const prkHmacKey = await crypto.subtle.importKey('raw', prk, hmacOpts, false, ['sign']);
 	const subKey = new Uint8Array(config.keyLen);
-	let previous = new Uint8Array(0);
-	let written = 0;
-	let counter = 1;
+	let prev = new Uint8Array(0), written = 0, counter = 1;
 	while (written < config.keyLen) {
-		const input = SS拼接字节(previous, SS子密钥信息, new Uint8Array([counter]));
-		previous = new Uint8Array(await crypto.subtle.sign('HMAC', prkHmacKey, input));
-		const copyLength = Math.min(previous.byteLength, config.keyLen - written);
-		subKey.set(previous.subarray(0, copyLength), written);
-		written += copyLength;
-		counter += 1;
+		const input = SS拼接字节(prev, SS子密钥信息, new Uint8Array([counter]));
+		prev = new Uint8Array(await crypto.subtle.sign('HMAC', prkHmacKey, input));
+		const copyLen = Math.min(prev.byteLength, config.keyLen - written);
+		subKey.set(prev.subarray(0, copyLen), written);
+		written += copyLen; counter += 1;
 	}
-	return crypto.subtle.importKey(
-		'raw',
-		subKey,
-		{ name: 'AES-GCM', length: config.aesLength },
-		false,
-		usages,
-	);
+	return crypto.subtle.importKey('raw', subKey, { name: 'AES-GCM', length: config.aesLength }, false, usages);
 }
 
 async function SSAEAD加密(cryptoKey, nonceCounter, plaintext) {
 	const iv = nonceCounter.slice();
-	const ciphertext = await crypto.subtle.encrypt(
-		{ name: 'AES-GCM', iv, tagLength: 128 },
-		cryptoKey,
-		plaintext,
-	);
+	const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, tagLength: 128 }, cryptoKey, plaintext);
 	SS递增Nonce计数器(nonceCounter);
-	return new Uint8Array(ciphertext);
+	return new Uint8Array(ct);
 }
 
 async function SSAEAD解密(cryptoKey, nonceCounter, ciphertext) {
 	const iv = nonceCounter.slice();
-	const plaintext = await crypto.subtle.decrypt(
-		{ name: 'AES-GCM', iv, tagLength: 128 },
-		cryptoKey,
-		ciphertext,
-	);
+	const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, tagLength: 128 }, cryptoKey, ciphertext);
 	SS递增Nonce计数器(nonceCounter);
-	return new Uint8Array(plaintext);
+	return new Uint8Array(pt);
 }
 
 async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID) {
