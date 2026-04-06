@@ -1811,6 +1811,13 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 				hasData = true;
 				mainBuf = value.buffer;
 				const chunkLen = value.byteLength;
+				if (value.byteOffset !== offset) {
+					log(`[BYOB] 偏移异常: 预期=${offset}, 实际=${value.byteOffset}`);
+					await 发送块(new Uint8Array(value.buffer, value.byteOffset, chunkLen).slice());
+					mainBuf = new ArrayBuffer(BYOB缓冲区大小);
+					offset = 0; totalBytes = 0;
+					continue;
+				}
 
 				if (chunkLen < BYOB单次读取上限) {
 					flush间隔毫秒 = BYOB快速刷新间隔;
@@ -1839,10 +1846,12 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 
 			正在读取 = false;
 			await flush();
+			if (flush定时器) { clearTimeout(flush定时器); flush定时器 = null; }
 		}
 	} catch (err) {
 		closeSocketQuietly(webSocket);
 	} finally {
+		try { reader.cancel(); } catch (e) { }
 		try { reader.releaseLock(); } catch (e) { }
 	}
 	if (!hasData && retryFunc) {
