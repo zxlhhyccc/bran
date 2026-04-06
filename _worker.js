@@ -1686,26 +1686,125 @@ async function WebSocket发送并等待(webSocket, payload) {
 
 async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 	let header = headerData, hasData = false;
-	await remoteSocket.readable.pipeTo(
-		new WritableStream({
-			async write(chunk, controller) {
+	let reader, useBYOB = false;
+	const BYOB缓冲区大小 = 512 * 1024;
+	const BYOB单次读取上限 = 64 * 1024;
+	const BYOB高吞吐阈值 = 50 * 1024 * 1024;
+	const BYOB慢速刷新间隔 = 20;
+	const BYOB快速刷新间隔 = 2;
+	const BYOB安全阈值 = BYOB缓冲区大小 - BYOB单次读取上限;
+
+	const 发送块 = async (chunk) => {
+		if (webSocket.readyState !== WebSocket.OPEN) throw new Error('ws.readyState is not open');
+		if (header) {
+			const response = new Uint8Array(header.length + chunk.byteLength);
+			response.set(header, 0);
+			response.set(chunk, header.length);
+			await WebSocket发送并等待(webSocket, response.buffer);
+			header = null;
+		} else {
+			await WebSocket发送并等待(webSocket, chunk);
+		}
+	};
+
+	try {
+		reader = remoteSocket.readable.getReader({ mode: 'byob' });
+		useBYOB = true;
+	} catch (e) {
+		reader = remoteSocket.readable.getReader();
+	}
+	try {
+		if (!useBYOB) {
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				if (!value || value.byteLength === 0) continue;
 				hasData = true;
-				if (webSocket.readyState !== WebSocket.OPEN) controller.error('ws.readyState is not open');
-				if (header) {
-					const response = new Uint8Array(header.length + chunk.byteLength);
-					response.set(header, 0);
-					response.set(chunk, header.length);
-					await WebSocket发送并等待(webSocket, response.buffer);
-					header = null;
-				} else {
-					await WebSocket发送并等待(webSocket, chunk);
+				const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+				await 发送块(chunk);
+			}
+		} else {
+			let mainBuf = new ArrayBuffer(BYOB缓冲区大小);
+			let offset = 0;
+			let totalBytes = 0;
+			let flush间隔毫秒 = BYOB快速刷新间隔;
+			let flush定时器 = null;
+			let 等待刷新恢复 = null;
+			let 正在读取 = false;
+			let 读取中待刷新 = false;
+
+			const flush = async () => {
+				if (正在读取) {
+					读取中待刷新 = true;
+					return;
 				}
-			},
-			abort() { },
-		})
-	).catch((err) => {
+				try {
+					if (offset > 0) {
+						const payload = new Uint8Array(mainBuf.slice(0, offset));
+						offset = 0;
+						await 发送块(payload);
+					}
+				} finally {
+					读取中待刷新 = false;
+					if (flush定时器) {
+						clearTimeout(flush定时器);
+						flush定时器 = null;
+					}
+					if (等待刷新恢复) {
+						const resolve = 等待刷新恢复;
+						等待刷新恢复 = null;
+						resolve();
+					}
+				}
+			};
+
+			while (true) {
+				正在读取 = true;
+				const { done, value } = await reader.read(new Uint8Array(mainBuf, offset, BYOB单次读取上限));
+				正在读取 = false;
+				if (done) break;
+				if (!value || value.byteLength === 0) {
+					if (读取中待刷新) await flush();
+					continue;
+				}
+
+				hasData = true;
+				mainBuf = value.buffer;
+				const chunkLen = value.byteLength;
+
+				if (chunkLen < BYOB单次读取上限) {
+					flush间隔毫秒 = BYOB快速刷新间隔;
+					if (chunkLen < 4096) totalBytes = 0;
+					if (offset > 0) {
+						offset += chunkLen;
+						await flush();
+					} else {
+						await 发送块(value.slice());
+					}
+				} else {
+					totalBytes += chunkLen;
+					offset += chunkLen;
+					if (!flush定时器) {
+						flush定时器 = setTimeout(() => {
+							flush().catch(() => closeSocketQuietly(webSocket));
+						}, flush间隔毫秒);
+					}
+					if (读取中待刷新) await flush();
+					if (offset > BYOB安全阈值) {
+						if (totalBytes > BYOB高吞吐阈值) flush间隔毫秒 = BYOB慢速刷新间隔;
+						await new Promise((resolve) => { 等待刷新恢复 = resolve; });
+					}
+				}
+			}
+
+			正在读取 = false;
+			await flush();
+		}
+	} catch (err) {
 		closeSocketQuietly(webSocket);
-	});
+	} finally {
+		try { reader.releaseLock(); } catch (e) { }
+	}
 	if (!hasData && retryFunc) {
 		await retryFunc();
 	}
