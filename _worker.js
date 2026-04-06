@@ -1,4 +1,4 @@
-﻿const Version = '2026-04-04 22:11:14';
+﻿const Version = '2026-04-06 18:42:41';
 /*In our project workflow, we first*/ import //the necessary modules, 
 /*then*/ { connect }//to the central server, 
 /*and all data flows*/ from//this single source.
@@ -930,18 +930,51 @@ async function 处理WS请求(request, yourUUID, url) {
 	const earlyDataHeader = request.headers.get('sec-websocket-protocol') || '';
 	const SS模式禁用EarlyData = !!url.searchParams.get('enc');
 	let 已取消读取 = false;
+	let 可读流已结束 = false;
 	const readable = new ReadableStream({
 		start(controller) {
+			const 是流已关闭错误 = (err) => {
+				const msg = err?.message || `${err || ''}`;
+				return msg.includes('ReadableStream is closed') || msg.includes('The stream is closed') || msg.includes('already closed');
+			};
+			const 安全入队 = (data) => {
+				if (已取消读取 || 可读流已结束) return;
+				try {
+					controller.enqueue(data);
+				} catch (err) {
+					可读流已结束 = true;
+					if (!是流已关闭错误(err)) {
+						try { controller.error(err); } catch (_) { }
+					}
+				}
+			};
+			const 安全关闭流 = () => {
+				if (已取消读取 || 可读流已结束) return;
+				可读流已结束 = true;
+				try {
+					controller.close();
+				} catch (err) {
+					if (!是流已关闭错误(err)) {
+						try { controller.error(err); } catch (_) { }
+					}
+				}
+			};
+			const 安全报错流 = (err) => {
+				if (已取消读取 || 可读流已结束) return;
+				可读流已结束 = true;
+				try { controller.error(err); } catch (_) { }
+			};
 			serverSock.addEventListener('message', (event) => {
-				if (!已取消读取) controller.enqueue(event.data);
+				安全入队(event.data);
 			});
 			serverSock.addEventListener('close', () => {
-				if (!已取消读取) {
-					closeSocketQuietly(serverSock);
-					controller.close();
-				}
+				closeSocketQuietly(serverSock);
+				安全关闭流();
 			});
-			serverSock.addEventListener('error', (err) => controller.error(err));
+			serverSock.addEventListener('error', (err) => {
+				安全报错流(err);
+				closeSocketQuietly(serverSock);
+			});
 
 			// SS 模式下禁用 sec-websocket-protocol early-data，避免把子协议值（如 "binary"）误当作 base64 数据注入首包导致 AEAD 解密失败。
 			if (SS模式禁用EarlyData || !earlyDataHeader) return;
@@ -949,13 +982,14 @@ async function 处理WS请求(request, yourUUID, url) {
 				const binaryString = atob(earlyDataHeader.replace(/-/g, '+').replace(/_/g, '/'));
 				const bytes = new Uint8Array(binaryString.length);
 				for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-				controller.enqueue(bytes.buffer);
+				安全入队(bytes.buffer);
 			} catch (error) {
-				controller.error(error);
+				安全报错流(error);
 			}
 		},
 		cancel() {
 			已取消读取 = true;
+			可读流已结束 = true;
 			closeSocketQuietly(serverSock);
 		}
 	});
@@ -1282,8 +1316,14 @@ async function 处理WS请求(request, yourUUID, url) {
 			释放远端写入器();
 		}
 	})).catch((err) => {
-		log(`[WS转发] 处理失败: ${err?.message || err}`);
+		const msg = err?.message || `${err}`;
+		if (msg.includes('Network connection lost') || msg.includes('ReadableStream is closed')) {
+			log(`[WS转发] 连接结束: ${msg}`);
+		} else {
+			log(`[WS转发] 处理失败: ${msg}`);
+		}
 		释放远端写入器();
+		closeSocketQuietly(serverSock);
 	});
 
 	return new Response(null, { status: 101, webSocket: clientSock });
