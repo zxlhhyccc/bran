@@ -1872,24 +1872,11 @@ async function httpConnect(targetHost, targetPort, initialData, HTTPS代理 = fa
 }
 //////////////////////////////////////////////////功能性函数///////////////////////////////////////////////
 function 获取传输协议配置(配置 = {}) {
-	if (配置.传输协议 === 'grpc') {
-		return {
-			type: 配置.gRPC模式 === 'multi' ? 'grpc&mode=multi' : 'grpc&mode=gun',
-			路径字段名: 'serviceName',
-			域名字段名: 'authority'
-		};
-	}
-	if (配置.传输协议 === 'xhttp') {
-		return {
-			type: 'xhttp&mode=stream-one',
-			路径字段名: 'path',
-			域名字段名: 'host'
-		};
-	}
+	const 是gRPC = 配置.传输协议 === 'grpc';
 	return {
-		type: 'ws',
-		路径字段名: 'path',
-		域名字段名: 'host'
+		type: 是gRPC ? (配置.gRPC模式 === 'multi' ? 'grpc&mode=multi' : 'grpc&mode=gun') : (配置.传输协议 === 'xhttp' ? 'xhttp&mode=stream-one' : 'ws'),
+		路径字段名: 是gRPC ? 'serviceName' : 'path',
+		域名字段名: 是gRPC ? 'authority' : 'host'
 	};
 }
 
