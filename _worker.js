@@ -1965,36 +1965,10 @@ async function httpsConnect(targetHost, targetPort, initialData) {
 }
 
 ////////////////////////////////////////////TLSClient by: @Alexandre_Kojeve////////////////////////////////////////////////
-const TLS_VERSION_10 = 769;
-const TLS_VERSION_12 = 771;
-const TLS_VERSION_13 = 772;
-
-const CONTENT_TYPE_CHANGE_CIPHER_SPEC = 20;
-const CONTENT_TYPE_ALERT = 21;
-const CONTENT_TYPE_HANDSHAKE = 22;
-const CONTENT_TYPE_APPLICATION_DATA = 23;
-
-const HANDSHAKE_TYPE_CLIENT_HELLO = 1;
-const HANDSHAKE_TYPE_SERVER_HELLO = 2;
-const HANDSHAKE_TYPE_NEW_SESSION_TICKET = 4;
-const HANDSHAKE_TYPE_ENCRYPTED_EXTENSIONS = 8;
-const HANDSHAKE_TYPE_CERTIFICATE = 11;
-const HANDSHAKE_TYPE_SERVER_KEY_EXCHANGE = 12;
-const HANDSHAKE_TYPE_CERTIFICATE_REQUEST = 13;
-const HANDSHAKE_TYPE_SERVER_HELLO_DONE = 14;
-const HANDSHAKE_TYPE_CERTIFICATE_VERIFY = 15;
-const HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE = 16;
-const HANDSHAKE_TYPE_FINISHED = 20;
-const HANDSHAKE_TYPE_KEY_UPDATE = 24;
-
-const EXT_SERVER_NAME = 0;
-const EXT_SUPPORTED_GROUPS = 10;
-const EXT_EC_POINT_FORMATS = 11;
-const EXT_SIGNATURE_ALGORITHMS = 13;
-const EXT_APPLICATION_LAYER_PROTOCOL_NEGOTIATION = 16;
-const EXT_SUPPORTED_VERSIONS = 43;
-const EXT_PSK_KEY_EXCHANGE_MODES = 45;
-const EXT_KEY_SHARE = 51;
+const TLS_VERSION_10 = 769, TLS_VERSION_12 = 771, TLS_VERSION_13 = 772;
+const CONTENT_TYPE_CHANGE_CIPHER_SPEC = 20, CONTENT_TYPE_ALERT = 21, CONTENT_TYPE_HANDSHAKE = 22, CONTENT_TYPE_APPLICATION_DATA = 23;
+const HANDSHAKE_TYPE_CLIENT_HELLO = 1, HANDSHAKE_TYPE_SERVER_HELLO = 2, HANDSHAKE_TYPE_NEW_SESSION_TICKET = 4, HANDSHAKE_TYPE_ENCRYPTED_EXTENSIONS = 8, HANDSHAKE_TYPE_CERTIFICATE = 11, HANDSHAKE_TYPE_SERVER_KEY_EXCHANGE = 12, HANDSHAKE_TYPE_CERTIFICATE_REQUEST = 13, HANDSHAKE_TYPE_SERVER_HELLO_DONE = 14, HANDSHAKE_TYPE_CERTIFICATE_VERIFY = 15, HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE = 16, HANDSHAKE_TYPE_FINISHED = 20, HANDSHAKE_TYPE_KEY_UPDATE = 24;
+const EXT_SERVER_NAME = 0, EXT_SUPPORTED_GROUPS = 10, EXT_EC_POINT_FORMATS = 11, EXT_SIGNATURE_ALGORITHMS = 13, EXT_APPLICATION_LAYER_PROTOCOL_NEGOTIATION = 16, EXT_SUPPORTED_VERSIONS = 43, EXT_PSK_KEY_EXCHANGE_MODES = 45, EXT_KEY_SHARE = 51;
 
 const ALERT_CLOSE_NOTIFY = 0;
 
@@ -2002,92 +1976,22 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const EMPTY_BYTES = new Uint8Array(0);
 
-const CIPHER_SUITES_BY_ID = new Map(
-	Object.entries({
-		TLS_AES_128_GCM_SHA256: {
-			id: 4865,
-			keyLen: 16,
-			ivLen: 12,
-			hash: "SHA-256",
-			tls13: !0
-		},
-		TLS_AES_256_GCM_SHA384: {
-			id: 4866,
-			keyLen: 32,
-			ivLen: 12,
-			hash: "SHA-384",
-			tls13: !0
-		},
-		TLS_CHACHA20_POLY1305_SHA256: {
-			id: 4867,
-			keyLen: 32,
-			ivLen: 12,
-			hash: "SHA-256",
-			tls13: !0,
-			chacha: !0
-		},
-		TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256: {
-			id: 49199,
-			keyLen: 16,
-			ivLen: 4,
-			hash: "SHA-256",
-			kex: "ECDHE"
-		},
-		TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384: {
-			id: 49200,
-			keyLen: 32,
-			ivLen: 4,
-			hash: "SHA-384",
-			kex: "ECDHE"
-		},
-		TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256: {
-			id: 52392,
-			keyLen: 32,
-			ivLen: 12,
-			hash: "SHA-256",
-			kex: "ECDHE",
-			chacha: !0
-		},
-		TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: {
-			id: 49195,
-			keyLen: 16,
-			ivLen: 4,
-			hash: "SHA-256",
-			kex: "ECDHE"
-		},
-		TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: {
-			id: 49196,
-			keyLen: 32,
-			ivLen: 4,
-			hash: "SHA-384",
-			kex: "ECDHE"
-		},
-		TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256: {
-			id: 52393,
-			keyLen: 32,
-			ivLen: 12,
-			hash: "SHA-256",
-			kex: "ECDHE",
-			chacha: !0
-		}
-	}).map((([, suite]) => [suite.id, suite]))
-);
-
-const GROUPS_BY_ID = new Map([
-	[29, "X25519"],
-	[23, "P-256"]
+const CIPHER_SUITES_BY_ID = new Map([
+	[4865, { id: 4865, keyLen: 16, ivLen: 12, hash: "SHA-256", tls13: !0 }],
+	[4866, { id: 4866, keyLen: 32, ivLen: 12, hash: "SHA-384", tls13: !0 }],
+	[4867, { id: 4867, keyLen: 32, ivLen: 12, hash: "SHA-256", tls13: !0, chacha: !0 }],
+	[49199, { id: 49199, keyLen: 16, ivLen: 4, hash: "SHA-256", kex: "ECDHE" }],
+	[49200, { id: 49200, keyLen: 32, ivLen: 4, hash: "SHA-384", kex: "ECDHE" }],
+	[52392, { id: 52392, keyLen: 32, ivLen: 12, hash: "SHA-256", kex: "ECDHE", chacha: !0 }],
+	[49195, { id: 49195, keyLen: 16, ivLen: 4, hash: "SHA-256", kex: "ECDHE" }],
+	[49196, { id: 49196, keyLen: 32, ivLen: 4, hash: "SHA-384", kex: "ECDHE" }],
+	[52393, { id: 52393, keyLen: 32, ivLen: 12, hash: "SHA-256", kex: "ECDHE", chacha: !0 }]
 ]);
-
-const SUPPORTED_SIGNATURE_ALGORITHMS = [
-	2052, 2053, 2054, 1025, 1281, 1537, 1027, 1283, 1539
-];
+const GROUPS_BY_ID = new Map([[29, "X25519"], [23, "P-256"]]);
+const SUPPORTED_SIGNATURE_ALGORITHMS = [2052, 2053, 2054, 1025, 1281, 1537, 1027, 1283, 1539];
 
 const tlsBytes = (...parts) => {
-	const flattenBytes = values => {
-		const bytes = [];
-		for (const value of values) value instanceof Uint8Array ? bytes.push(...value) : Array.isArray(value) ? bytes.push(...flattenBytes(value)) : "number" == typeof value && bytes.push(value);
-		return bytes
-	};
+	const flattenBytes = values => values.flatMap(value => value instanceof Uint8Array ? [...value] : Array.isArray(value) ? flattenBytes(value) : "number" == typeof value ? [value] : []);
 	return new Uint8Array(flattenBytes(parts))
 };
 const uint16be = value => [value >> 8 & 255, 255 & value];
@@ -2104,21 +2008,15 @@ const concatBytes = (...chunks) => {
 const randomBytes = length => crypto.getRandomValues(new Uint8Array(length));
 const constantTimeEqual = (left, right) => {
 	if (!left || !right || left.length !== right.length) return !1;
-	let diff = 0;
-	for (let index = 0; index < left.length; index++) diff |= left[index] ^ right[index];
+	let diff = 0; for (let index = 0; index < left.length; index++) diff |= left[index] ^ right[index];
 	return 0 === diff
 };
 const hashByteLength = hash => "SHA-512" === hash ? 64 : "SHA-384" === hash ? 48 : 32;
 async function hmac(hash, key, data) {
-	const cryptoKey = await crypto.subtle.importKey("raw", key, {
-		name: "HMAC",
-		hash: hash
-	}, !1, ["sign"]);
+	const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash }, !1, ["sign"]);
 	return new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, data))
 }
-async function digestBytes(hash, data) {
-	return new Uint8Array(await crypto.subtle.digest(hash, data))
-}
+async function digestBytes(hash, data) { return new Uint8Array(await crypto.subtle.digest(hash, data)) }
 async function tls12Prf(secret, label, seed, length, hash = "SHA-256") {
 	const labelSeed = concatBytes(textEncoder.encode(label), seed);
 	let output = new Uint8Array(0),
@@ -2145,70 +2043,26 @@ async function hkdfExpandLabel(hash, secret, label, context, length) {
 	}(hash, secret, tlsBytes(uint16be(length), fullLabel.length, fullLabel, context.length, context), length)
 }
 async function generateKeyShare(group = "P-256") {
-	if ("X25519" === group) {
-		const keyPair = await crypto.subtle.generateKey({
-			name: "X25519"
-		}, !0, ["deriveBits"]);
-		return {
-			keyPair: keyPair,
-			publicKeyRaw: new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey))
-		}
-	}
-	const keyPair = await crypto.subtle.generateKey({
-		name: "ECDH",
-		namedCurve: group
-	}, !0, ["deriveBits"]);
-	return {
-		keyPair: keyPair,
-		publicKeyRaw: new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey))
-	}
+	const algorithm = "X25519" === group ? { name: "X25519" } : { name: "ECDH", namedCurve: group };
+	const keyPair = await crypto.subtle.generateKey(algorithm, !0, ["deriveBits"]);
+	return { keyPair, publicKeyRaw: new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey)) }
 }
 async function deriveSharedSecret(privateKey, peerPublicKey, group = "P-256") {
-	if ("X25519" === group) {
-		const peerKey = await crypto.subtle.importKey("raw", peerPublicKey, {
-			name: "X25519"
-		}, !1, []);
-		return new Uint8Array(await crypto.subtle.deriveBits({
-			name: "X25519",
-			public: peerKey
-		}, privateKey, 256))
-	}
-	const peerKey = await crypto.subtle.importKey("raw", peerPublicKey, {
-		name: "ECDH",
-		namedCurve: group
-	}, !1, []),
+	const algorithm = "X25519" === group ? { name: "X25519" } : { name: "ECDH", namedCurve: group },
+		peerKey = await crypto.subtle.importKey("raw", peerPublicKey, algorithm, !1, []),
 		bits = "P-384" === group ? 384 : "P-521" === group ? 528 : 256;
-	return new Uint8Array(await crypto.subtle.deriveBits({
-		name: "ECDH",
-		public: peerKey
-	}, privateKey, bits))
+	return new Uint8Array(await crypto.subtle.deriveBits({ name: algorithm.name, public: peerKey }, privateKey, bits))
 }
 async function aesGcmEncrypt(key, initializationVector, plaintext, additionalData) {
-	const cryptoKey = await crypto.subtle.importKey("raw", key, {
-		name: "AES-GCM"
-	}, !1, ["encrypt"]);
-	return new Uint8Array(await crypto.subtle.encrypt({
-		name: "AES-GCM",
-		iv: initializationVector,
-		additionalData: additionalData,
-		tagLength: 128
-	}, cryptoKey, plaintext))
+	const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, !1, ["encrypt"]);
+	return new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: initializationVector, additionalData, tagLength: 128 }, cryptoKey, plaintext))
 }
 async function aesGcmDecrypt(key, initializationVector, ciphertext, additionalData) {
-	const cryptoKey = await crypto.subtle.importKey("raw", key, {
-		name: "AES-GCM"
-	}, !1, ["decrypt"]);
-	return new Uint8Array(await crypto.subtle.decrypt({
-		name: "AES-GCM",
-		iv: initializationVector,
-		additionalData: additionalData,
-		tagLength: 128
-	}, cryptoKey, ciphertext))
+	const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, !1, ["decrypt"]);
+	return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: initializationVector, additionalData, tagLength: 128 }, cryptoKey, ciphertext))
 }
 
-function rotateLeft32(value, bits) {
-	return (value << bits | value >>> 32 - bits) >>> 0
-}
+function rotateLeft32(value, bits) { return (value << bits | value >>> 32 - bits) >>> 0 }
 
 function chachaQuarterRound(state, indexA, indexB, indexC, indexD) {
 	state[indexA] = state[indexA] + state[indexB] >>> 0, state[indexD] = rotateLeft32(state[indexD] ^ state[indexA], 16), state[indexC] = state[indexC] + state[indexD] >>> 0, state[indexB] = rotateLeft32(state[indexB] ^ state[indexC], 12), state[indexA] = state[indexA] + state[indexB] >>> 0, state[indexD] = rotateLeft32(state[indexD] ^ state[indexA], 8), state[indexC] = state[indexC] + state[indexD] >>> 0, state[indexB] = rotateLeft32(state[indexB] ^ state[indexC], 7)
@@ -2299,20 +2153,11 @@ function chacha20Poly1305Decrypt(key, nonce, ciphertext, additionalData) {
 	return chacha20Xor(key, nonce, encryptedData)
 }
 
-function buildTlsRecord(contentType, fragment, version = TLS_VERSION_12) {
-	return tlsBytes(contentType, uint16be(version), uint16be(fragment.length), fragment)
-}
-
-function buildHandshakeMessage(handshakeType, body) {
-	return tlsBytes(handshakeType, (length => [length >> 16 & 255, length >> 8 & 255, 255 & length])(body.length), body)
-}
+function buildTlsRecord(contentType, fragment, version = TLS_VERSION_12) { return tlsBytes(contentType, uint16be(version), uint16be(fragment.length), fragment) }
+function buildHandshakeMessage(handshakeType, body) { return tlsBytes(handshakeType, (length => [length >> 16 & 255, length >> 8 & 255, 255 & length])(body.length), body) }
 class TlsRecordParser {
-	constructor() {
-		this.buffer = new Uint8Array(0)
-	}
-	feed(chunk) {
-		this.buffer = concatBytes(this.buffer, chunk)
-	}
+	constructor() { this.buffer = new Uint8Array(0) }
+	feed(chunk) { this.buffer = concatBytes(this.buffer, chunk) }
 	next() {
 		if (this.buffer.length < 5) return null;
 		const contentType = this.buffer[0],
@@ -2320,21 +2165,12 @@ class TlsRecordParser {
 			length = readUint16(this.buffer, 3);
 		if (this.buffer.length < 5 + length) return null;
 		const fragment = this.buffer.slice(5, 5 + length);
-		return this.buffer = this.buffer.slice(5 + length), {
-			type: contentType,
-			version: version,
-			length: length,
-			fragment: fragment
-		}
+		return this.buffer = this.buffer.slice(5 + length), { type: contentType, version, length, fragment }
 	}
 }
 class TlsHandshakeParser {
-	constructor() {
-		this.buffer = new Uint8Array(0)
-	}
-	feed(chunk) {
-		this.buffer = concatBytes(this.buffer, chunk)
-	}
+	constructor() { this.buffer = new Uint8Array(0) }
+	feed(chunk) { this.buffer = concatBytes(this.buffer, chunk) }
 	next() {
 		if (this.buffer.length < 4) return null;
 		const handshakeType = this.buffer[0],
@@ -2342,12 +2178,7 @@ class TlsHandshakeParser {
 		if (this.buffer.length < 4 + length) return null;
 		const body = this.buffer.slice(4, 4 + length),
 			raw = this.buffer.slice(0, 4 + length);
-		return this.buffer = this.buffer.slice(4 + length), {
-			type: handshakeType,
-			length: length,
-			body: body,
-			raw: raw
-		}
+		return this.buffer = this.buffer.slice(4 + length), { type: handshakeType, length, body, raw }
 	}
 }
 
@@ -2380,38 +2211,20 @@ function parseServerHello(body) {
 			else if (extensionType === EXT_KEY_SHARE && extensionLength >= 4) {
 				const group = readUint16(extensionData, 0),
 					keyLength = readUint16(extensionData, 2);
-				keyShare = {
-					group: group,
-					key: extensionData.slice(4, 4 + keyLength)
-				}
+				keyShare = { group, key: extensionData.slice(4, 4 + keyLength) }
 			} else extensionType === EXT_APPLICATION_LAYER_PROTOCOL_NEGOTIATION && extensionLength >= 3 && (alpn = textDecoder.decode(extensionData.slice(3, 3 + extensionData[2])))
 		}
 	}
 	const helloRetryRequestRandom = new Uint8Array([207, 33, 173, 116, 229, 154, 97, 17, 190, 29, 140, 2, 30, 101, 184, 145, 194, 162, 17, 22, 122, 187, 140, 94, 7, 158, 9, 226, 200, 168, 51, 156]);
-	return {
-		version: legacyVersion,
-		serverRandom: serverRandom,
-		sessionId: sessionId,
-		cipherSuite: cipherSuite,
-		compression: compression,
-		selectedVersion: selectedVersion,
-		keyShare: keyShare,
-		alpn: alpn,
-		isHRR: constantTimeEqual(serverRandom, helloRetryRequestRandom),
-		isTls13: selectedVersion === TLS_VERSION_13
-	}
+	return { version: legacyVersion, serverRandom, sessionId, cipherSuite, compression, selectedVersion, keyShare, alpn, isHRR: constantTimeEqual(serverRandom, helloRetryRequestRandom), isTls13: selectedVersion === TLS_VERSION_13 }
 }
 
 function parseServerKeyExchange(body) {
-	let offset = 0;
-	offset++;
+	let offset = 1;
 	const namedCurve = readUint16(body, offset);
 	offset += 2;
 	const keyLength = body[offset++];
-	return {
-		namedCurve: namedCurve,
-		serverPublicKey: body.slice(offset, offset + keyLength)
-	}
+	return { namedCurve, serverPublicKey: body.slice(offset, offset + keyLength) }
 }
 
 function extractLeafCertificate(body, hasContext = 0) {
@@ -2428,9 +2241,7 @@ function extractLeafCertificate(body, hasContext = 0) {
 }
 
 function parseEncryptedExtensions(body) {
-	const parsed = {
-		alpn: null
-	};
+	const parsed = { alpn: null };
 	let offset = 2;
 	const extensionsEnd = 2 + readUint16(body, 0);
 	for (; offset + 4 <= extensionsEnd;) {
@@ -2446,11 +2257,7 @@ function parseEncryptedExtensions(body) {
 	return parsed
 }
 
-function buildClientHello(clientRandom, serverName, keyShares, {
-	tls13: enableTls13 = !0,
-	tls12: enableTls12 = !0,
-	alpn: alpn = null
-} = {}) {
+function buildClientHello(clientRandom, serverName, keyShares, { tls13: enableTls13 = !0, tls12: enableTls12 = !0, alpn = null } = {}) {
 	const cipherIds = [];
 	enableTls13 && cipherIds.push(4865, 4866, 4867), enableTls12 && cipherIds.push(49199, 49200, 52392, 49195, 49196, 52393);
 	const cipherBytes = tlsBytes(...cipherIds.flatMap(uint16be)),
@@ -2465,10 +2272,7 @@ function buildClientHello(clientRandom, serverName, keyShares, {
 	extensions.push(tlsBytes(uint16be(EXT_SIGNATURE_ALGORITHMS), uint16be(signatureBytes.length + 2), uint16be(signatureBytes.length), signatureBytes));
 	const protocols = Array.isArray(alpn) ? alpn.filter(Boolean) : alpn ? [alpn] : [];
 	if (protocols.length) {
-		const alpnBytes = concatBytes(...protocols.map((protocol => {
-			const protocolBytes = textEncoder.encode(protocol);
-			return tlsBytes(protocolBytes.length, protocolBytes)
-		})));
+		const alpnBytes = concatBytes(...protocols.map((protocol => { const protocolBytes = textEncoder.encode(protocol); return tlsBytes(protocolBytes.length, protocolBytes) })));
 		extensions.push(tlsBytes(uint16be(EXT_APPLICATION_LAYER_PROTOCOL_NEGOTIATION), uint16be(alpnBytes.length + 2), uint16be(alpnBytes.length), alpnBytes))
 	}
 	if (enableTls13 && keyShares) {
@@ -2485,10 +2289,7 @@ function buildClientHello(clientRandom, serverName, keyShares, {
 	const extensionsBytes = concatBytes(...extensions);
 	return buildHandshakeMessage(HANDSHAKE_TYPE_CLIENT_HELLO, tlsBytes(uint16be(TLS_VERSION_12), clientRandom, 0, uint16be(cipherBytes.length), cipherBytes, 1, 0, uint16be(extensionsBytes.length), extensionsBytes))
 }
-const uint64be = sequenceNumber => {
-	const bytes = new Uint8Array(8);
-	return new DataView(bytes.buffer).setBigUint64(0, sequenceNumber, !1), bytes
-},
+const uint64be = sequenceNumber => { const bytes = new Uint8Array(8); return new DataView(bytes.buffer).setBigUint64(0, sequenceNumber, !1), bytes },
 	xorSequenceIntoIv = (initializationVector, sequenceNumber) => {
 		const nonce = initializationVector.slice(),
 			sequenceBytes = uint64be(sequenceNumber);
@@ -2501,27 +2302,16 @@ class TlsClient {
 		if (this.socket = socket, this.serverName = options.serverName || "", this.supportTls13 = !1 !== options.tls13, this.supportTls12 = !1 !== options.tls12, !this.supportTls13 && !this.supportTls12) throw new Error("At least one TLS version must be enabled");
 		this.alpnProtocols = Array.isArray(options.alpn) ? options.alpn : options.alpn ? [options.alpn] : null, this.timeout = options.timeout ?? 3e4, this.clientRandom = randomBytes(32), this.serverRandom = null, this.handshakeChunks = [], this.handshakeComplete = !1, this.negotiatedAlpn = null, this.cipherSuite = null, this.cipherConfig = null, this.isTls13 = !1, this.masterSecret = null, this.handshakeSecret = null, this.clientWriteKey = null, this.serverWriteKey = null, this.clientWriteIv = null, this.serverWriteIv = null, this.clientHandshakeKey = null, this.serverHandshakeKey = null, this.clientHandshakeIv = null, this.serverHandshakeIv = null, this.clientAppKey = null, this.serverAppKey = null, this.clientAppIv = null, this.serverAppIv = null, this.clientSeqNum = 0n, this.serverSeqNum = 0n, this.recordParser = new TlsRecordParser, this.handshakeParser = new TlsHandshakeParser, this.keyPairs = new Map, this.ecdhKeyPair = null, this.sawCert = !1
 	}
-	recordHandshake(chunk) {
-		this.handshakeChunks.push(chunk)
-	}
-	transcript() {
-		return 1 === this.handshakeChunks.length ? this.handshakeChunks[0] : concatBytes(...this.handshakeChunks)
-	}
-	getCipherConfig(cipherSuite) {
-		return CIPHER_SUITES_BY_ID.get(cipherSuite) || null
-	}
-	async readChunk(reader) {
-		return this.timeout ? Promise.race([reader.read(), new Promise(((resolve, reject) => setTimeout((() => reject(new Error("TLS read timeout"))), this.timeout)))]) : reader.read()
-	}
+	recordHandshake(chunk) { this.handshakeChunks.push(chunk) }
+	transcript() { return 1 === this.handshakeChunks.length ? this.handshakeChunks[0] : concatBytes(...this.handshakeChunks) }
+	getCipherConfig(cipherSuite) { return CIPHER_SUITES_BY_ID.get(cipherSuite) || null }
+	async readChunk(reader) { return this.timeout ? Promise.race([reader.read(), new Promise(((resolve, reject) => setTimeout((() => reject(new Error("TLS read timeout"))), this.timeout)))]) : reader.read() }
 	async readRecordsUntil(reader, predicate, closedError) {
 		for (; ;) {
 			let record;
 			for (; record = this.recordParser.next();)
 				if (await predicate(record)) return;
-			const {
-				value: value,
-				done: done
-			} = await this.readChunk(reader);
+			const { value, done } = await this.readChunk(reader);
 			if (done) throw new Error(closedError);
 			this.recordParser.feed(value)
 		}
@@ -2538,27 +2328,14 @@ class TlsClient {
 			}
 		}), closedError)
 	}
-	async acceptCertificate(certificate) {
-		if (!certificate?.length) throw new Error("Empty certificate");
-		this.sawCert = !0
-	}
+	async acceptCertificate(certificate) { if (!certificate?.length) throw new Error("Empty certificate"); this.sawCert = !0 }
 	async handshake() {
 		const [p256Share, x25519Share] = await Promise.all([generateKeyShare("P-256"), generateKeyShare("X25519")]);
-		this.keyPairs = new Map([
-			[23, p256Share],
-			[29, x25519Share]
-		]), this.ecdhKeyPair = p256Share.keyPair;
+		this.keyPairs = new Map([[23, p256Share], [29, x25519Share]]), this.ecdhKeyPair = p256Share.keyPair;
 		const reader = this.socket.readable.getReader(),
 			writer = this.socket.writable.getWriter();
 		try {
-			const clientHello = buildClientHello(this.clientRandom, this.serverName, {
-				x25519: x25519Share.publicKeyRaw,
-				p256: p256Share.publicKeyRaw
-			}, {
-				tls13: this.supportTls13,
-				tls12: this.supportTls12,
-				alpn: this.alpnProtocols
-			});
+			const clientHello = buildClientHello(this.clientRandom, this.serverName, { x25519: x25519Share.publicKeyRaw, p256: p256Share.publicKeyRaw }, { tls13: this.supportTls13, tls12: this.supportTls12, alpn: this.alpnProtocols });
 			this.recordHandshake(clientHello), await writer.write(buildTlsRecord(CONTENT_TYPE_HANDSHAKE, clientHello, TLS_VERSION_10));
 			const serverHello = await this.receiveServerHello(reader);
 			if (serverHello.isHRR) throw new Error("HelloRetryRequest is not supported by TLSClientMini");
@@ -2573,10 +2350,7 @@ class TlsClient {
 	}
 	async receiveServerHello(reader) {
 		for (; ;) {
-			const {
-				value: value,
-				done: done
-			} = await this.readChunk(reader);
+			const { value, done } = await this.readChunk(reader);
 			if (done) throw new Error("Connection closed waiting for ServerHello");
 			let record;
 			for (this.recordParser.feed(value); record = this.recordParser.next();) {
@@ -2782,10 +2556,7 @@ class TlsClient {
 				}
 				if (record.type !== CONTENT_TYPE_APPLICATION_DATA) continue;
 				if (!this.isTls13) return this.decryptTls12(record.fragment, CONTENT_TYPE_APPLICATION_DATA);
-				const {
-					data: data,
-					type: type
-				} = await this.decryptTls13(record.fragment);
+				const { data, type } = await this.decryptTls13(record.fragment);
 				if (type === CONTENT_TYPE_APPLICATION_DATA) return data;
 				if (type !== CONTENT_TYPE_HANDSHAKE) continue;
 				let message;
@@ -2794,10 +2565,7 @@ class TlsClient {
 			}
 			const reader = this.socket.readable.getReader();
 			try {
-				const {
-					value: value,
-					done: done
-				} = await this.readChunk(reader);
+				const { value, done } = await this.readChunk(reader);
 				if (done) return null;
 				this.recordParser.feed(value)
 			} finally {
@@ -2805,9 +2573,7 @@ class TlsClient {
 			}
 		}
 	}
-	close() {
-		this.socket.close()
-	}
+	close() { this.socket.close() }
 }
 
 function stripIPv6Brackets(hostname = '') {
