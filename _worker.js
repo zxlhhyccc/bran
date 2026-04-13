@@ -2044,14 +2044,15 @@ async function hkdfExpandLabel(hash, secret, label, context, length) {
 }
 async function generateKeyShare(group = "P-256") {
 	const algorithm = "X25519" === group ? { name: "X25519" } : { name: "ECDH", namedCurve: group };
-	const keyPair = await crypto.subtle.generateKey(algorithm, !0, ["deriveBits"]);
-	return { keyPair, publicKeyRaw: new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey)) }
+	const keyPair = /** @type {CryptoKeyPair} */ (await crypto.subtle.generateKey(algorithm, !0, ["deriveBits"]));
+	const publicKeyRaw = /** @type {ArrayBuffer} */ (await crypto.subtle.exportKey("raw", keyPair.publicKey));
+	return { keyPair, publicKeyRaw: new Uint8Array(publicKeyRaw) }
 }
 async function deriveSharedSecret(privateKey, peerPublicKey, group = "P-256") {
 	const algorithm = "X25519" === group ? { name: "X25519" } : { name: "ECDH", namedCurve: group },
 		peerKey = await crypto.subtle.importKey("raw", peerPublicKey, algorithm, !1, []),
 		bits = "P-384" === group ? 384 : "P-521" === group ? 528 : 256;
-	return new Uint8Array(await crypto.subtle.deriveBits({ name: algorithm.name, public: peerKey }, privateKey, bits))
+	return new Uint8Array(await crypto.subtle.deriveBits(/** @type {any} */ ({ name: algorithm.name, public: peerKey }), privateKey, bits))
 }
 async function aesGcmEncrypt(key, initializationVector, plaintext, additionalData) {
 	const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, !1, ["encrypt"]);
@@ -2368,8 +2369,9 @@ class TlsClient {
 		}
 	}
 	async handshakeTls12(reader, writer) {
-		let serverKeyExchange = null,
-			sawServerHelloDone = !1;
+		/** @type {{ namedCurve: number, serverPublicKey: Uint8Array } | null} */
+		let serverKeyExchange = null;
+		let sawServerHelloDone = !1;
 		if (await this.readHandshakeUntil(reader, (async message => {
 			switch (message.type) {
 				case HANDSHAKE_TYPE_CERTIFICATE: {
@@ -2390,12 +2392,13 @@ class TlsClient {
 					this.recordHandshake(message.raw)
 			}
 		}), "Connection closed during TLS 1.2 handshake"), !this.sawCert) throw new Error("Missing TLS 1.2 leaf certificate");
-		if (!serverKeyExchange) throw new Error("Missing TLS 1.2 ServerKeyExchange");
-		const curveName = GROUPS_BY_ID.get(serverKeyExchange.namedCurve);
-		if (!curveName) throw new Error(`Unsupported named curve: 0x${serverKeyExchange.namedCurve.toString(16)}`);
-		const keyShare = this.keyPairs.get(serverKeyExchange.namedCurve);
-		if (!keyShare) throw new Error(`Missing key pair for curve: 0x${serverKeyExchange.namedCurve.toString(16)}`);
-		const preMasterSecret = await deriveSharedSecret(keyShare.keyPair.privateKey, serverKeyExchange.serverPublicKey, curveName),
+		const serverKeyExchangeData = /** @type {{ namedCurve: number, serverPublicKey: Uint8Array } | null} */ (serverKeyExchange);
+		if (!serverKeyExchangeData) throw new Error("Missing TLS 1.2 ServerKeyExchange");
+		const curveName = GROUPS_BY_ID.get(serverKeyExchangeData.namedCurve);
+		if (!curveName) throw new Error(`Unsupported named curve: 0x${serverKeyExchangeData.namedCurve.toString(16)}`);
+		const keyShare = this.keyPairs.get(serverKeyExchangeData.namedCurve);
+		if (!keyShare) throw new Error(`Missing key pair for curve: 0x${serverKeyExchangeData.namedCurve.toString(16)}`);
+		const preMasterSecret = await deriveSharedSecret(keyShare.keyPair.privateKey, serverKeyExchangeData.serverPublicKey, curveName),
 			clientKeyExchange = buildHandshakeMessage(HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE, tlsBytes(keyShare.publicKeyRaw.length, keyShare.publicKeyRaw));
 		this.recordHandshake(clientKeyExchange);
 		const hashName = this.cipherConfig.hash;
