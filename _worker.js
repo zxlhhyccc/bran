@@ -1,4 +1,4 @@
-﻿const Version = '2026-04-10 06:03:17';
+﻿const Version = '2026-04-13 17:46:51';
 /*In our project workflow, we first*/ import //the necessary modules, 
 /*then*/ { connect }//to the central server, 
 /*and all data flows*/ from//this single source.
