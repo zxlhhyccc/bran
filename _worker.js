@@ -1970,7 +1970,8 @@ const CONTENT_TYPE_CHANGE_CIPHER_SPEC = 20, CONTENT_TYPE_ALERT = 21, CONTENT_TYP
 const HANDSHAKE_TYPE_CLIENT_HELLO = 1, HANDSHAKE_TYPE_SERVER_HELLO = 2, HANDSHAKE_TYPE_NEW_SESSION_TICKET = 4, HANDSHAKE_TYPE_ENCRYPTED_EXTENSIONS = 8, HANDSHAKE_TYPE_CERTIFICATE = 11, HANDSHAKE_TYPE_SERVER_KEY_EXCHANGE = 12, HANDSHAKE_TYPE_CERTIFICATE_REQUEST = 13, HANDSHAKE_TYPE_SERVER_HELLO_DONE = 14, HANDSHAKE_TYPE_CERTIFICATE_VERIFY = 15, HANDSHAKE_TYPE_CLIENT_KEY_EXCHANGE = 16, HANDSHAKE_TYPE_FINISHED = 20, HANDSHAKE_TYPE_KEY_UPDATE = 24;
 const EXT_SERVER_NAME = 0, EXT_SUPPORTED_GROUPS = 10, EXT_EC_POINT_FORMATS = 11, EXT_SIGNATURE_ALGORITHMS = 13, EXT_APPLICATION_LAYER_PROTOCOL_NEGOTIATION = 16, EXT_SUPPORTED_VERSIONS = 43, EXT_PSK_KEY_EXCHANGE_MODES = 45, EXT_KEY_SHARE = 51;
 
-const ALERT_CLOSE_NOTIFY = 0;
+const ALERT_CLOSE_NOTIFY = 0, ALERT_LEVEL_WARNING = 1, ALERT_UNRECOGNIZED_NAME = 112;
+const shouldIgnoreTlsAlert = fragment => fragment?.[0] === ALERT_LEVEL_WARNING && fragment?.[1] === ALERT_UNRECOGNIZED_NAME;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -2321,7 +2322,10 @@ class TlsClient {
 		for (let message; message = this.handshakeParser.next();)
 			if (await predicate(message)) return;
 		return this.readRecordsUntil(reader, (async record => {
-			if (record.type === CONTENT_TYPE_ALERT) throw new Error(`TLS Alert: ${record.fragment[1]}`);
+			if (record.type === CONTENT_TYPE_ALERT) {
+				if (shouldIgnoreTlsAlert(record.fragment)) return;
+				throw new Error(`TLS Alert: ${record.fragment[1]}`);
+			}
 			if (record.type === CONTENT_TYPE_HANDSHAKE) {
 				this.handshakeParser.feed(record.fragment);
 				for (let message; message = this.handshakeParser.next();)
@@ -2355,7 +2359,10 @@ class TlsClient {
 			if (done) throw new Error("Connection closed waiting for ServerHello");
 			let record;
 			for (this.recordParser.feed(value); record = this.recordParser.next();) {
-				if (record.type === CONTENT_TYPE_ALERT) throw new Error(`TLS Alert: level=${record.fragment[0]}, desc=${record.fragment[1]}`);
+				if (record.type === CONTENT_TYPE_ALERT) {
+					if (shouldIgnoreTlsAlert(record.fragment)) continue;
+					throw new Error(`TLS Alert: level=${record.fragment[0]}, desc=${record.fragment[1]}`);
+				}
 				if (record.type !== CONTENT_TYPE_HANDSHAKE) continue;
 				let message;
 				for (this.handshakeParser.feed(record.fragment); message = this.handshakeParser.next();) {
@@ -2412,7 +2419,10 @@ class TlsClient {
 		this.recordHandshake(finishedMessage), await writer.write(buildTlsRecord(CONTENT_TYPE_HANDSHAKE, await this.encryptTls12(finishedMessage, CONTENT_TYPE_HANDSHAKE)));
 		let sawChangeCipherSpec = !1;
 		await this.readRecordsUntil(reader, (async record => {
-			if (record.type === CONTENT_TYPE_ALERT) throw new Error(`TLS Alert: ${record.fragment[1]}`);
+			if (record.type === CONTENT_TYPE_ALERT) {
+				if (shouldIgnoreTlsAlert(record.fragment)) return;
+				throw new Error(`TLS Alert: ${record.fragment[1]}`);
+			}
 			if (record.type === CONTENT_TYPE_CHANGE_CIPHER_SPEC) return void (sawChangeCipherSpec = !0);
 			if (record.type !== CONTENT_TYPE_HANDSHAKE || !sawChangeCipherSpec) return;
 			const decrypted = await this.decryptTls12(record.fragment, CONTENT_TYPE_HANDSHAKE);
@@ -2471,7 +2481,10 @@ class TlsClient {
 		};
 		await this.readRecordsUntil(reader, (async record => {
 			if (record.type === CONTENT_TYPE_CHANGE_CIPHER_SPEC || record.type === CONTENT_TYPE_HANDSHAKE) return;
-			if (record.type === CONTENT_TYPE_ALERT) throw new Error(`TLS Alert: ${record.fragment[1]}`);
+			if (record.type === CONTENT_TYPE_ALERT) {
+				if (shouldIgnoreTlsAlert(record.fragment)) return;
+				throw new Error(`TLS Alert: ${record.fragment[1]}`);
+			}
 			if (record.type !== CONTENT_TYPE_APPLICATION_DATA) return;
 			const decrypted = await this.decryptTls13Handshake(record.fragment),
 				innerType = decrypted[decrypted.length - 1],
