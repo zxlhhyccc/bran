@@ -2053,7 +2053,7 @@ async function deriveSharedSecret(privateKey, peerPublicKey, group = "P-256") {
 	const algorithm = "X25519" === group ? { name: "X25519" } : { name: "ECDH", namedCurve: group },
 		peerKey = await crypto.subtle.importKey("raw", peerPublicKey, algorithm, !1, []),
 		bits = "P-384" === group ? 384 : "P-521" === group ? 528 : 256;
-	return new Uint8Array(await crypto.subtle.deriveBits(/** @type {any} */ ({ name: algorithm.name, public: peerKey }), privateKey, bits))
+	return new Uint8Array(await crypto.subtle.deriveBits(/** @type {any} */({ name: algorithm.name, public: peerKey }), privateKey, bits))
 }
 async function aesGcmEncrypt(key, initializationVector, plaintext, additionalData) {
 	const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, !1, ["encrypt"]);
@@ -3435,6 +3435,10 @@ async function 读取config_JSON(env, hostname, userID, UA = "Mozilla/5.0", 重�
 					全局: "http://" + 占位符,
 					标准: "http=" + 占位符
 				},
+				HTTPS: {
+					全局: "https://" + 占位符,
+					标准: "https=" + 占位符
+				},
 			},
 		},
 		TG: {
@@ -3498,6 +3502,7 @@ async function 读取config_JSON(env, hostname, userID, UA = "Mozilla/5.0", 重�
 			},
 		};
 	}
+	if (!config_JSON.反代.路径模板.HTTPS) config_JSON.反代.路径模板.HTTPS = { 全局: "https://" + 占位符, 标准: "https=" + 占位符 };
 
 	const 代理配置 = config_JSON.反代.路径模板[config_JSON.反代.SOCKS5.启用?.toUpperCase()];
 
