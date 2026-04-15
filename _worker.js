@@ -1534,128 +1534,78 @@ function 拼接字节数据(...chunkList) {
 	return result;
 }
 
-function 解析木马UDP数据报流(chunk, 上下文 = null) {
+async function 转发木马UDP数据(chunk, webSocket, 上下文) {
 	const 当前块 = 数据转Uint8Array(chunk);
 	const 缓存块 = 上下文?.缓存 instanceof Uint8Array ? 上下文.缓存 : new Uint8Array(0);
 	const input = 缓存块.byteLength ? 拼接字节数据(缓存块, 当前块) : 当前块;
-	const 数据报 = [];
 	let cursor = 0;
+
 	while (cursor < input.byteLength) {
+		const packetStart = cursor;
 		const atype = input[cursor];
 		let addrCursor = cursor + 1;
-		let hostname = '';
-
-		if (atype === 1) {
-			if (input.byteLength < addrCursor + 4) break;
-			hostname = `${input[addrCursor]}.${input[addrCursor + 1]}.${input[addrCursor + 2]}.${input[addrCursor + 3]}`;
-			addrCursor += 4;
-		} else if (atype === 3) {
+		let addrLen = 0;
+		if (atype === 1) addrLen = 4;
+		else if (atype === 4) addrLen = 16;
+		else if (atype === 3) {
 			if (input.byteLength < addrCursor + 1) break;
-			const domainLength = input[addrCursor];
-			if (input.byteLength < addrCursor + 1 + domainLength) break;
-			hostname = new TextDecoder().decode(input.slice(addrCursor + 1, addrCursor + 1 + domainLength));
-			addrCursor += 1 + domainLength;
-		} else if (atype === 4) {
-			if (input.byteLength < addrCursor + 16) break;
-			const ipv6 = [];
-			const ipv6View = new DataView(input.buffer, input.byteOffset + addrCursor, 16);
-			for (let i = 0; i < 8; i++) ipv6.push(ipv6View.getUint16(i * 2).toString(16));
-			hostname = ipv6.join(':');
-			addrCursor += 16;
-		} else {
-			throw new Error(`invalid trojan udp addressType: ${atype}`);
-		}
+			addrLen = 1 + input[addrCursor];
+		} else throw new Error(`invalid trojan udp addressType: ${atype}`);
 
-		if (!hostname) throw new Error(`invalid trojan udp addressType: ${atype}`);
-		if (input.byteLength < addrCursor + 6) break;
+		const portCursor = addrCursor + addrLen;
+		if (input.byteLength < portCursor + 6) break;
 
-		const port = (input[addrCursor] << 8) | input[addrCursor + 1];
-		const payloadLength = (input[addrCursor + 2] << 8) | input[addrCursor + 3];
-		if (input[addrCursor + 4] !== 0x0d || input[addrCursor + 5] !== 0x0a) throw new Error('invalid trojan udp delimiter');
-		const payloadStart = addrCursor + 6;
+		const port = (input[portCursor] << 8) | input[portCursor + 1];
+		const payloadLength = (input[portCursor + 2] << 8) | input[portCursor + 3];
+		if (input[portCursor + 4] !== 0x0d || input[portCursor + 5] !== 0x0a) throw new Error('invalid trojan udp delimiter');
+
+		const payloadStart = portCursor + 6;
 		const payloadEnd = payloadStart + payloadLength;
 		if (input.byteLength < payloadEnd) break;
 
-		数据报.push({
-			addressType: atype,
-			hostname,
-			port,
-			地址端口头: input.slice(cursor, addrCursor + 2),
-			payload: input.slice(payloadStart, payloadEnd)
-		});
+		const 地址端口头 = input.slice(packetStart, portCursor + 2);
+		const payload = input.slice(payloadStart, payloadEnd);
 		cursor = payloadEnd;
-	}
 
-	const 剩余 = input.slice(cursor);
-	if (上下文) 上下文.缓存 = 剩余;
-	return { 数据报, 剩余 };
-}
+		if (port !== 53) throw new Error('UDP is not supported');
+		if (!payload.byteLength) continue;
 
-function 封装木马UDP数据报(地址端口头, payload) {
-	const headerBytes = 数据转Uint8Array(地址端口头);
-	const payloadBytes = 数据转Uint8Array(payload);
-	const frame = new Uint8Array(headerBytes.byteLength + 4 + payloadBytes.byteLength);
-	frame.set(headerBytes, 0);
-	frame[headerBytes.byteLength] = (payloadBytes.byteLength >>> 8) & 0xff;
-	frame[headerBytes.byteLength + 1] = payloadBytes.byteLength & 0xff;
-	frame[headerBytes.byteLength + 2] = 0x0d;
-	frame[headerBytes.byteLength + 3] = 0x0a;
-	frame.set(payloadBytes, headerBytes.byteLength + 4);
-	return frame;
-}
+		let tcpDNS查询 = payload;
+		if (payload.byteLength < 2 || ((payload[0] << 8) | payload[1]) !== payload.byteLength - 2) {
+			tcpDNS查询 = new Uint8Array(payload.byteLength + 2);
+			tcpDNS查询[0] = (payload.byteLength >>> 8) & 0xff;
+			tcpDNS查询[1] = payload.byteLength & 0xff;
+			tcpDNS查询.set(payload, 2);
+		}
 
-function 封装DNS为TCP(payload) {
-	const dnsPayload = 数据转Uint8Array(payload);
-	const frame = new Uint8Array(2 + dnsPayload.byteLength);
-	frame[0] = (dnsPayload.byteLength >>> 8) & 0xff;
-	frame[1] = dnsPayload.byteLength & 0xff;
-	frame.set(dnsPayload, 2);
-	return frame;
-}
-
-function 规范DNS查询为TCP(payload) {
-	const dnsPayload = 数据转Uint8Array(payload);
-	if (dnsPayload.byteLength >= 2) {
-		const declared = (dnsPayload[0] << 8) | dnsPayload[1];
-		if (declared === dnsPayload.byteLength - 2) return dnsPayload;
-	}
-	return 封装DNS为TCP(dnsPayload);
-}
-
-function 解析TCPDNS响应流(chunk, 上下文 = null) {
-	const 当前块 = 数据转Uint8Array(chunk);
-	const 缓存块 = 上下文?.缓存 instanceof Uint8Array ? 上下文.缓存 : new Uint8Array(0);
-	const input = 缓存块.byteLength ? 拼接字节数据(缓存块, 当前块) : 当前块;
-	const 消息列表 = [];
-	let cursor = 0;
-	while (cursor + 2 <= input.byteLength) {
-		const payloadLength = (input[cursor] << 8) | input[cursor + 1];
-		const payloadStart = cursor + 2;
-		const payloadEnd = payloadStart + payloadLength;
-		if (payloadEnd > input.byteLength) break;
-		消息列表.push(input.slice(payloadStart, payloadEnd));
-		cursor = payloadEnd;
-	}
-	const 剩余 = input.slice(cursor);
-	if (上下文) 上下文.缓存 = 剩余;
-	return { 消息列表, 剩余 };
-}
-
-async function 转发木马UDP数据(chunk, webSocket, 上下文) {
-	const { 数据报 } = 解析木马UDP数据报流(chunk, 上下文);
-	for (const packet of 数据报) {
-		if (packet.port !== 53) throw new Error('UDP is not supported');
-		if (!packet.payload.byteLength) continue;
 		const dns响应上下文 = { 缓存: new Uint8Array(0) };
-		const tcpDNS查询 = 规范DNS查询为TCP(packet.payload);
-		//log(`[木马UDP] DNS 数据报 ${packet.hostname}:${packet.port} payload=${packet.payload.byteLength}B tcp=${tcpDNS查询.byteLength}B`);
 		await forwardataudp(tcpDNS查询, webSocket, null, (dnsRespChunk) => {
-			const { 消息列表 } = 解析TCPDNS响应流(dnsRespChunk, dns响应上下文);
-			if (!消息列表.length) return new Uint8Array(0);
-			//log(`[木马UDP] DNS 响应拆包: ${消息列表.length}条`);
-			return 消息列表.map((dnsResp) => 封装木马UDP数据报(packet.地址端口头, dnsResp));
+			const 当前响应块 = 数据转Uint8Array(dnsRespChunk);
+			const 响应输入 = dns响应上下文.缓存.byteLength ? 拼接字节数据(dns响应上下文.缓存, 当前响应块) : 当前响应块;
+			const 响应帧列表 = [];
+			let responseCursor = 0;
+			while (responseCursor + 2 <= 响应输入.byteLength) {
+				const dnsLen = (响应输入[responseCursor] << 8) | 响应输入[responseCursor + 1];
+				const dnsStart = responseCursor + 2;
+				const dnsEnd = dnsStart + dnsLen;
+				if (dnsEnd > 响应输入.byteLength) break;
+				const dnsPayload = 响应输入.slice(dnsStart, dnsEnd);
+				const frame = new Uint8Array(地址端口头.byteLength + 4 + dnsPayload.byteLength);
+				frame.set(地址端口头, 0);
+				frame[地址端口头.byteLength] = (dnsPayload.byteLength >>> 8) & 0xff;
+				frame[地址端口头.byteLength + 1] = dnsPayload.byteLength & 0xff;
+				frame[地址端口头.byteLength + 2] = 0x0d;
+				frame[地址端口头.byteLength + 3] = 0x0a;
+				frame.set(dnsPayload, 地址端口头.byteLength + 4);
+				响应帧列表.push(frame);
+				responseCursor = dnsEnd;
+			}
+			dns响应上下文.缓存 = 响应输入.slice(responseCursor);
+			return 响应帧列表.length ? 响应帧列表 : new Uint8Array(0);
 		});
 	}
+
+	if (上下文) 上下文.缓存 = input.slice(cursor);
 }
 
 function SS递增Nonce计数器(counter) {
