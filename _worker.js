@@ -1138,7 +1138,7 @@ async function 处理WS请求(request, yourUUID, url) {
 				};
 				const 入站解密器 = {
 					async 输入(dataChunk) {
-						const chunk = SS数据转Uint8Array(dataChunk);
+						const chunk = 数据转Uint8Array(dataChunk);
 						if (chunk.byteLength > 0) 入站状态.buffer = 拼接字节数据(入站状态.buffer, chunk);
 						if (!入站状态.hasSalt) {
 							const 初始化成功 = await 初始化入站解密状态();
@@ -1181,7 +1181,7 @@ async function 处理WS请求(request, yourUUID, url) {
 					let 随机字节已发送 = false;
 					出站加密器 = {
 						async 加密并发送(dataChunk, sendChunk) {
-							const plaintextData = SS数据转Uint8Array(dataChunk);
+							const plaintextData = 数据转Uint8Array(dataChunk);
 							if (!随机字节已发送) {
 								await sendChunk(出站随机字节);
 								随机字节已发送 = true;
@@ -1227,7 +1227,7 @@ async function 处理WS请求(request, yourUUID, url) {
 						return serverSock.readyState;
 					},
 					send(data) {
-						const chunk = SS数据转Uint8Array(data);
+						const chunk = 数据转Uint8Array(data);
 						if (chunk.byteLength <= SS单批最大字节) {
 							return SS入队发送(chunk);
 						}
@@ -1279,7 +1279,7 @@ async function 处理WS请求(request, yourUUID, url) {
 				await forwardataTCP(上下文.目标主机, 上下文.目标端口, 明文块, 上下文.回包Socket, null, remoteConnWrapper, yourUUID);
 				continue;
 			}
-			const 明文数据 = SS数据转Uint8Array(明文块);
+			const 明文数据 = 数据转Uint8Array(明文块);
 			if (明文数据.byteLength < 3) throw new Error('invalid ss data');
 			const addressType = 明文数据[0];
 			let cursor = 1;
@@ -1485,7 +1485,7 @@ const SSAEAD标签长度 = 16, SSNonce长度 = 12;
 const SS子密钥信息 = new TextEncoder().encode('ss-subkey');
 const SS文本编码器 = new TextEncoder(), SS文本解码器 = new TextDecoder(), SS主密钥缓存 = new Map();
 
-function SS数据转Uint8Array(data) {
+function 数据转Uint8Array(data) {
 	if (data instanceof Uint8Array) return data;
 	if (data instanceof ArrayBuffer) return new Uint8Array(data);
 	if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
@@ -1494,7 +1494,7 @@ function SS数据转Uint8Array(data) {
 
 function 拼接字节数据(...chunkList) {
 	if (!chunkList || chunkList.length === 0) return new Uint8Array(0);
-	const chunks = chunkList.map(SS数据转Uint8Array);
+	const chunks = chunkList.map(数据转Uint8Array);
 	const total = chunks.reduce((sum, c) => sum + c.byteLength, 0);
 	const result = new Uint8Array(total);
 	let offset = 0;
@@ -1726,6 +1726,7 @@ async function WebSocket发送并等待(webSocket, payload) {
 async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 	let header = headerData, hasData = false, reader, useBYOB = false;
 	const BYOB缓冲区大小 = 512 * 1024, BYOB单次读取上限 = 64 * 1024, BYOB高吞吐阈值 = 50 * 1024 * 1024;
+	const 普通流聚合阈值 = 128 * 1024, 普通流刷新间隔 = 2;
 	const BYOB慢速刷新间隔 = 20, BYOB快速刷新间隔 = 2, BYOB安全阈值 = BYOB缓冲区大小 - BYOB单次读取上限;
 
 	const 发送块 = async (chunk) => {
@@ -1743,13 +1744,39 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 
 	try {
 		if (!useBYOB) {
+			let pendingChunks = [], pendingBytes = 0, flush定时器 = null, flush任务 = null;
+			const flush = async () => {
+				if (flush任务) return flush任务;
+				flush任务 = (async () => {
+					if (flush定时器) { clearTimeout(flush定时器); flush定时器 = null }
+					if (pendingBytes <= 0) return;
+					const chunks = pendingChunks, bytes = pendingBytes;
+					pendingChunks = []; pendingBytes = 0;
+					const payload = chunks.length === 1 ? chunks[0] : 拼接字节数据(...chunks);
+					if (payload.byteLength || bytes > 0) await 发送块(payload);
+				})().finally(() => { flush任务 = null });
+				return flush任务;
+			};
+			const 推送普通流块 = async (chunk) => {
+				const bytes = 数据转Uint8Array(chunk);
+				if (!bytes.byteLength) return;
+				pendingChunks.push(bytes);
+				pendingBytes += bytes.byteLength;
+				if (pendingBytes >= 普通流聚合阈值) {
+					await flush();
+					if (pendingBytes >= 普通流聚合阈值) await flush();
+				} else if (!flush定时器) {
+					flush定时器 = setTimeout(() => { flush().catch(() => closeSocketQuietly(webSocket)) }, 普通流刷新间隔);
+				}
+			};
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) break;
 				if (!value || value.byteLength === 0) continue;
 				hasData = true;
-				await 发送块(value instanceof Uint8Array ? value : new Uint8Array(value));
+				await 推送普通流块(value);
 			}
+			await flush();
 		} else {
 			let mainBuf = new ArrayBuffer(BYOB缓冲区大小), offset = 0, totalBytes = 0;
 			let flush间隔毫秒 = BYOB快速刷新间隔, flush定时器 = null, 等待刷新恢复 = null;
@@ -1926,15 +1953,32 @@ async function httpConnect(targetHost, targetPort, initialData, HTTPS代理 = fa
 
 async function httpsConnect(targetHost, targetPort, initialData) {
 	const { username, password, hostname, port } = parsedSocks5Address;
-	const proxySocket = connect({ hostname, port });
 	const encoder = new TextEncoder();
 	const decoder = new TextDecoder();
 	let tlsSocket = null;
+	const tlsServerName = isIPHostname(hostname) ? '' : stripIPv6Brackets(hostname);
+	const 需要ChaCha回退 = (error) => /cipher|handshake|TLS Alert|ServerHello|Finished|Unsupported|Missing TLS/i.test(error?.message || `${error || ''}`);
+	const 打开HTTPS代理TLS = async (allowChacha = false) => {
+		const proxySocket = connect({ hostname, port });
+		try {
+			await proxySocket.opened;
+			const socket = new TlsClient(proxySocket, { serverName: tlsServerName, insecure: true, allowChacha });
+			await socket.handshake();
+			log(`[HTTPS代理] TLS版本: ${socket.isTls13 ? '1.3' : '1.2'} | Cipher: 0x${socket.cipherSuite.toString(16)}${socket.cipherConfig?.chacha ? ' (ChaCha20)' : ' (AES-GCM)'}`);
+			return socket;
+		} catch (error) {
+			try { proxySocket.close() } catch (e) { }
+			throw error;
+		}
+	};
 	try {
-		await proxySocket.opened;
-		const tlsServerName = isIPHostname(hostname) ? '' : stripIPv6Brackets(hostname);
-		tlsSocket = new TlsClient(proxySocket, { serverName: tlsServerName, insecure: true });
-		await tlsSocket.handshake();
+		try {
+			tlsSocket = await 打开HTTPS代理TLS(false);
+		} catch (error) {
+			if (!需要ChaCha回退(error)) throw error;
+			log(`[HTTPS代理] AES-GCM TLS 握手失败，回退 ChaCha20 兼容模式: ${error?.message || error}`);
+			tlsSocket = await 打开HTTPS代理TLS(true);
+		}
 
 		const auth = username && password ? `Proxy-Authorization: Basic ${btoa(`${username}:${password}`)}\r\n` : '';
 		const request = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n${auth}User-Agent: Mozilla/5.0\r\nConnection: keep-alive\r\n\r\n`;
@@ -1955,11 +1999,11 @@ async function httpsConnect(targetHost, targetPort, initialData) {
 		const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : NaN;
 		if (!Number.isFinite(statusCode) || statusCode < 200 || statusCode >= 300) throw new Error(`Connection failed: HTTP ${statusCode}`);
 
-		if (有效数据长度(initialData) > 0) await tlsSocket.write(SS数据转Uint8Array(initialData));
+		if (有效数据长度(initialData) > 0) await tlsSocket.write(数据转Uint8Array(initialData));
 		const bufferedData = bytesRead > headerEndIndex ? responseBuffer.subarray(headerEndIndex, bytesRead) : null;
 		return wrapTlsSocket(tlsSocket, bufferedData);
 	} catch (error) {
-		try { tlsSocket ? tlsSocket.close() : proxySocket.close() } catch (e) { }
+		try { tlsSocket?.close() } catch (e) { }
 		throw error;
 	}
 }
@@ -2055,12 +2099,11 @@ async function deriveSharedSecret(privateKey, peerPublicKey, group = "P-256") {
 		bits = "P-384" === group ? 384 : "P-521" === group ? 528 : 256;
 	return new Uint8Array(await crypto.subtle.deriveBits(/** @type {any} */({ name: algorithm.name, public: peerKey }), privateKey, bits))
 }
-async function aesGcmEncrypt(key, initializationVector, plaintext, additionalData) {
-	const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, !1, ["encrypt"]);
+async function importAesGcmKey(key, usages) { return crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, !1, usages) }
+async function aesGcmEncryptWithKey(cryptoKey, initializationVector, plaintext, additionalData) {
 	return new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: initializationVector, additionalData, tagLength: 128 }, cryptoKey, plaintext))
 }
-async function aesGcmDecrypt(key, initializationVector, ciphertext, additionalData) {
-	const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, !1, ["decrypt"]);
+async function aesGcmDecryptWithKey(cryptoKey, initializationVector, ciphertext, additionalData) {
 	return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: initializationVector, additionalData, tagLength: 128 }, cryptoKey, ciphertext))
 }
 
@@ -2155,32 +2198,49 @@ function chacha20Poly1305Decrypt(key, nonce, ciphertext, additionalData) {
 	return chacha20Xor(key, nonce, encryptedData)
 }
 
-function buildTlsRecord(contentType, fragment, version = TLS_VERSION_12) { return tlsBytes(contentType, uint16be(version), uint16be(fragment.length), fragment) }
+const TLS_MAX_PLAINTEXT_FRAGMENT = 16 * 1024;
+function buildTlsRecord(contentType, fragment, version = TLS_VERSION_12) {
+	const data = 数据转Uint8Array(fragment);
+	const record = new Uint8Array(5 + data.byteLength);
+	record[0] = contentType;
+	record[1] = version >> 8 & 255;
+	record[2] = version & 255;
+	record[3] = data.byteLength >> 8 & 255;
+	record[4] = data.byteLength & 255;
+	record.set(data, 5);
+	return record;
+}
 function buildHandshakeMessage(handshakeType, body) { return tlsBytes(handshakeType, (length => [length >> 16 & 255, length >> 8 & 255, 255 & length])(body.length), body) }
 class TlsRecordParser {
 	constructor() { this.buffer = new Uint8Array(0) }
-	feed(chunk) { this.buffer = concatBytes(this.buffer, chunk) }
+	feed(chunk) {
+		const bytes = 数据转Uint8Array(chunk);
+		this.buffer = this.buffer.length ? concatBytes(this.buffer, bytes) : bytes
+	}
 	next() {
 		if (this.buffer.length < 5) return null;
 		const contentType = this.buffer[0],
 			version = readUint16(this.buffer, 1),
 			length = readUint16(this.buffer, 3);
 		if (this.buffer.length < 5 + length) return null;
-		const fragment = this.buffer.slice(5, 5 + length);
-		return this.buffer = this.buffer.slice(5 + length), { type: contentType, version, length, fragment }
+		const fragment = this.buffer.subarray(5, 5 + length);
+		return this.buffer = this.buffer.subarray(5 + length), { type: contentType, version, length, fragment }
 	}
 }
 class TlsHandshakeParser {
 	constructor() { this.buffer = new Uint8Array(0) }
-	feed(chunk) { this.buffer = concatBytes(this.buffer, chunk) }
+	feed(chunk) {
+		const bytes = 数据转Uint8Array(chunk);
+		this.buffer = this.buffer.length ? concatBytes(this.buffer, bytes) : bytes
+	}
 	next() {
 		if (this.buffer.length < 4) return null;
 		const handshakeType = this.buffer[0],
 			length = readUint24(this.buffer, 1);
 		if (this.buffer.length < 4 + length) return null;
-		const body = this.buffer.slice(4, 4 + length),
-			raw = this.buffer.slice(0, 4 + length);
-		return this.buffer = this.buffer.slice(4 + length), { type: handshakeType, length, body, raw }
+		const body = this.buffer.subarray(4, 4 + length),
+			raw = this.buffer.subarray(0, 4 + length);
+		return this.buffer = this.buffer.subarray(4 + length), { type: handshakeType, length, body, raw }
 	}
 }
 
@@ -2259,9 +2319,9 @@ function parseEncryptedExtensions(body) {
 	return parsed
 }
 
-function buildClientHello(clientRandom, serverName, keyShares, { tls13: enableTls13 = !0, tls12: enableTls12 = !0, alpn = null } = {}) {
+function buildClientHello(clientRandom, serverName, keyShares, { tls13: enableTls13 = !0, tls12: enableTls12 = !0, alpn = null, chacha = !0 } = {}) {
 	const cipherIds = [];
-	enableTls13 && cipherIds.push(4865, 4866, 4867), enableTls12 && cipherIds.push(49199, 49200, 52392, 49195, 49196, 52393);
+	enableTls13 && cipherIds.push(4865, 4866, ...(chacha ? [4867] : [])), enableTls12 && cipherIds.push(49199, 49200, 49195, 49196, ...(chacha ? [52392, 52393] : []));
 	const cipherBytes = tlsBytes(...cipherIds.flatMap(uint16be)),
 		extensions = [tlsBytes(255, 1, 0, 1, 0)];
 	if (serverName) {
@@ -2302,7 +2362,7 @@ const uint64be = sequenceNumber => { const bytes = new Uint8Array(8); return new
 class TlsClient {
 	constructor(socket, options = {}) {
 		if (this.socket = socket, this.serverName = options.serverName || "", this.supportTls13 = !1 !== options.tls13, this.supportTls12 = !1 !== options.tls12, !this.supportTls13 && !this.supportTls12) throw new Error("At least one TLS version must be enabled");
-		this.alpnProtocols = Array.isArray(options.alpn) ? options.alpn : options.alpn ? [options.alpn] : null, this.timeout = options.timeout ?? 3e4, this.clientRandom = randomBytes(32), this.serverRandom = null, this.handshakeChunks = [], this.handshakeComplete = !1, this.negotiatedAlpn = null, this.cipherSuite = null, this.cipherConfig = null, this.isTls13 = !1, this.masterSecret = null, this.handshakeSecret = null, this.clientWriteKey = null, this.serverWriteKey = null, this.clientWriteIv = null, this.serverWriteIv = null, this.clientHandshakeKey = null, this.serverHandshakeKey = null, this.clientHandshakeIv = null, this.serverHandshakeIv = null, this.clientAppKey = null, this.serverAppKey = null, this.clientAppIv = null, this.serverAppIv = null, this.clientSeqNum = 0n, this.serverSeqNum = 0n, this.recordParser = new TlsRecordParser, this.handshakeParser = new TlsHandshakeParser, this.keyPairs = new Map, this.ecdhKeyPair = null, this.sawCert = !1
+		this.alpnProtocols = Array.isArray(options.alpn) ? options.alpn : options.alpn ? [options.alpn] : null, this.allowChacha = options.allowChacha !== false, this.timeout = options.timeout ?? 3e4, this.clientRandom = randomBytes(32), this.serverRandom = null, this.handshakeChunks = [], this.handshakeComplete = !1, this.negotiatedAlpn = null, this.cipherSuite = null, this.cipherConfig = null, this.isTls13 = !1, this.masterSecret = null, this.handshakeSecret = null, this.clientWriteKey = null, this.serverWriteKey = null, this.clientWriteIv = null, this.serverWriteIv = null, this.clientHandshakeKey = null, this.serverHandshakeKey = null, this.clientHandshakeIv = null, this.serverHandshakeIv = null, this.clientAppKey = null, this.serverAppKey = null, this.clientAppIv = null, this.serverAppIv = null, this.clientWriteCryptoKey = null, this.serverWriteCryptoKey = null, this.clientHandshakeCryptoKey = null, this.serverHandshakeCryptoKey = null, this.clientAppCryptoKey = null, this.serverAppCryptoKey = null, this.clientSeqNum = 0n, this.serverSeqNum = 0n, this.recordParser = new TlsRecordParser, this.handshakeParser = new TlsHandshakeParser, this.keyPairs = new Map, this.ecdhKeyPair = null, this.sawCert = !1
 	}
 	recordHandshake(chunk) { this.handshakeChunks.push(chunk) }
 	transcript() { return 1 === this.handshakeChunks.length ? this.handshakeChunks[0] : concatBytes(...this.handshakeChunks) }
@@ -2340,7 +2400,7 @@ class TlsClient {
 		const reader = this.socket.readable.getReader(),
 			writer = this.socket.writable.getWriter();
 		try {
-			const clientHello = buildClientHello(this.clientRandom, this.serverName, { x25519: x25519Share.publicKeyRaw, p256: p256Share.publicKeyRaw }, { tls13: this.supportTls13, tls12: this.supportTls12, alpn: this.alpnProtocols });
+			const clientHello = buildClientHello(this.clientRandom, this.serverName, { x25519: x25519Share.publicKeyRaw, p256: p256Share.publicKeyRaw }, { tls13: this.supportTls13, tls12: this.supportTls12, alpn: this.alpnProtocols, chacha: this.allowChacha });
 			this.recordHandshake(clientHello), await writer.write(buildTlsRecord(CONTENT_TYPE_HANDSHAKE, clientHello, TLS_VERSION_10));
 			const serverHello = await this.receiveServerHello(reader);
 			if (serverHello.isHRR) throw new Error("HelloRetryRequest is not supported by TLSClientMini");
@@ -2413,7 +2473,9 @@ class TlsClient {
 		const keyLen = this.cipherConfig.keyLen,
 			ivLen = this.cipherConfig.ivLen,
 			keyBlock = await tls12Prf(this.masterSecret, "key expansion", concatBytes(this.serverRandom, this.clientRandom), 2 * keyLen + 2 * ivLen, hashName);
-		this.clientWriteKey = keyBlock.slice(0, keyLen), this.serverWriteKey = keyBlock.slice(keyLen, 2 * keyLen), this.clientWriteIv = keyBlock.slice(2 * keyLen, 2 * keyLen + ivLen), this.serverWriteIv = keyBlock.slice(2 * keyLen + ivLen, 2 * keyLen + 2 * ivLen), await writer.write(buildTlsRecord(CONTENT_TYPE_HANDSHAKE, clientKeyExchange)), await writer.write(buildTlsRecord(CONTENT_TYPE_CHANGE_CIPHER_SPEC, tlsBytes(1)));
+		this.clientWriteKey = keyBlock.slice(0, keyLen), this.serverWriteKey = keyBlock.slice(keyLen, 2 * keyLen), this.clientWriteIv = keyBlock.slice(2 * keyLen, 2 * keyLen + ivLen), this.serverWriteIv = keyBlock.slice(2 * keyLen + ivLen, 2 * keyLen + 2 * ivLen);
+		if (!this.cipherConfig.chacha) [this.clientWriteCryptoKey, this.serverWriteCryptoKey] = await Promise.all([importAesGcmKey(this.clientWriteKey, ["encrypt"]), importAesGcmKey(this.serverWriteKey, ["decrypt"])]);
+		await writer.write(buildTlsRecord(CONTENT_TYPE_HANDSHAKE, clientKeyExchange)), await writer.write(buildTlsRecord(CONTENT_TYPE_CHANGE_CIPHER_SPEC, tlsBytes(1)));
 		const clientVerifyData = await tls12Prf(this.masterSecret, "client finished", await digestBytes(hashName, this.transcript()), 12, hashName),
 			finishedMessage = buildHandshakeMessage(HANDSHAKE_TYPE_FINISHED, clientVerifyData);
 		this.recordHandshake(finishedMessage), await writer.write(buildTlsRecord(CONTENT_TYPE_HANDSHAKE, await this.encryptTls12(finishedMessage, CONTENT_TYPE_HANDSHAKE)));
@@ -2449,6 +2511,7 @@ class TlsClient {
 			clientHandshakeTrafficSecret = await hkdfExpandLabel(hashName, this.handshakeSecret, "c hs traffic", transcriptHash, hashLen),
 			serverHandshakeTrafficSecret = await hkdfExpandLabel(hashName, this.handshakeSecret, "s hs traffic", transcriptHash, hashLen);
 		[this.clientHandshakeKey, this.clientHandshakeIv] = await deriveTrafficKeys(hashName, clientHandshakeTrafficSecret, keyLen, ivLen), [this.serverHandshakeKey, this.serverHandshakeIv] = await deriveTrafficKeys(hashName, serverHandshakeTrafficSecret, keyLen, ivLen);
+		if (!this.cipherConfig.chacha) [this.clientHandshakeCryptoKey, this.serverHandshakeCryptoKey] = await Promise.all([importAesGcmKey(this.clientHandshakeKey, ["encrypt"]), importAesGcmKey(this.serverHandshakeKey, ["decrypt"])]);
 		const serverFinishedKey = await hkdfExpandLabel(hashName, serverHandshakeTrafficSecret, "finished", EMPTY_BYTES, hashLen);
 		let serverFinishedReceived = !1;
 		const handleHandshakeMessage = async message => {
@@ -2501,6 +2564,7 @@ class TlsClient {
 			clientAppTrafficSecret = await hkdfExpandLabel(hashName, masterSecret, "c ap traffic", applicationTranscriptHash, hashLen),
 			serverAppTrafficSecret = await hkdfExpandLabel(hashName, masterSecret, "s ap traffic", applicationTranscriptHash, hashLen);
 		[this.clientAppKey, this.clientAppIv] = await deriveTrafficKeys(hashName, clientAppTrafficSecret, keyLen, ivLen), [this.serverAppKey, this.serverAppIv] = await deriveTrafficKeys(hashName, serverAppTrafficSecret, keyLen, ivLen);
+		if (!this.cipherConfig.chacha) [this.clientAppCryptoKey, this.serverAppCryptoKey] = await Promise.all([importAesGcmKey(this.clientAppKey, ["encrypt"]), importAesGcmKey(this.serverAppKey, ["decrypt"])]);
 		const clientFinishedKey = await hkdfExpandLabel(hashName, clientHandshakeTrafficSecret, "finished", EMPTY_BYTES, hashLen),
 			clientFinishedVerifyData = await hmac(hashName, clientFinishedKey, await digestBytes(hashName, this.transcript())),
 			clientFinishedMessage = buildHandshakeMessage(HANDSHAKE_TYPE_FINISHED, clientFinishedVerifyData);
@@ -2515,7 +2579,8 @@ class TlsClient {
 			return chacha20Poly1305Encrypt(this.clientWriteKey, nonce, plaintext, additionalData)
 		}
 		const explicitNonce = randomBytes(8);
-		return concatBytes(explicitNonce, await aesGcmEncrypt(this.clientWriteKey, concatBytes(this.clientWriteIv, explicitNonce), plaintext, additionalData))
+		if (!this.clientWriteCryptoKey) this.clientWriteCryptoKey = await importAesGcmKey(this.clientWriteKey, ["encrypt"]);
+		return concatBytes(explicitNonce, await aesGcmEncryptWithKey(this.clientWriteCryptoKey, concatBytes(this.clientWriteIv, explicitNonce), plaintext, additionalData))
 	}
 	async decryptTls12(ciphertext, contentType) {
 		const sequenceNumber = this.serverSeqNum++,
@@ -2524,40 +2589,55 @@ class TlsClient {
 			const nonce = xorSequenceIntoIv(this.serverWriteIv, sequenceNumber);
 			return chacha20Poly1305Decrypt(this.serverWriteKey, nonce, ciphertext, concatBytes(sequenceBytes, [contentType], uint16be(TLS_VERSION_12), uint16be(ciphertext.length - 16)))
 		}
-		const explicitNonce = ciphertext.slice(0, 8),
-			encryptedData = ciphertext.slice(8);
-		return aesGcmDecrypt(this.serverWriteKey, concatBytes(this.serverWriteIv, explicitNonce), encryptedData, concatBytes(sequenceBytes, [contentType], uint16be(TLS_VERSION_12), uint16be(encryptedData.length - 16)))
+		const explicitNonce = ciphertext.subarray(0, 8),
+			encryptedData = ciphertext.subarray(8);
+		if (!this.serverWriteCryptoKey) this.serverWriteCryptoKey = await importAesGcmKey(this.serverWriteKey, ["decrypt"]);
+		return aesGcmDecryptWithKey(this.serverWriteCryptoKey, concatBytes(this.serverWriteIv, explicitNonce), encryptedData, concatBytes(sequenceBytes, [contentType], uint16be(TLS_VERSION_12), uint16be(encryptedData.length - 16)))
 	}
 	async encryptTls13Handshake(plaintext) {
 		const nonce = xorSequenceIntoIv(this.clientHandshakeIv, this.clientSeqNum++),
 			additionalData = tlsBytes(CONTENT_TYPE_APPLICATION_DATA, 3, 3, uint16be(plaintext.length + 16));
-		return this.cipherConfig.chacha ? chacha20Poly1305Encrypt(this.clientHandshakeKey, nonce, plaintext, additionalData) : aesGcmEncrypt(this.clientHandshakeKey, nonce, plaintext, additionalData)
+		if (this.cipherConfig.chacha) return chacha20Poly1305Encrypt(this.clientHandshakeKey, nonce, plaintext, additionalData);
+		if (!this.clientHandshakeCryptoKey) this.clientHandshakeCryptoKey = await importAesGcmKey(this.clientHandshakeKey, ["encrypt"]);
+		return aesGcmEncryptWithKey(this.clientHandshakeCryptoKey, nonce, plaintext, additionalData)
 	}
 	async decryptTls13Handshake(ciphertext) {
 		const nonce = xorSequenceIntoIv(this.serverHandshakeIv, this.serverSeqNum++),
 			additionalData = tlsBytes(CONTENT_TYPE_APPLICATION_DATA, 3, 3, uint16be(ciphertext.length));
-		return this.cipherConfig.chacha ? chacha20Poly1305Decrypt(this.serverHandshakeKey, nonce, ciphertext, additionalData) : aesGcmDecrypt(this.serverHandshakeKey, nonce, ciphertext, additionalData)
+		if (this.cipherConfig.chacha) return chacha20Poly1305Decrypt(this.serverHandshakeKey, nonce, ciphertext, additionalData);
+		if (!this.serverHandshakeCryptoKey) this.serverHandshakeCryptoKey = await importAesGcmKey(this.serverHandshakeKey, ["decrypt"]);
+		return aesGcmDecryptWithKey(this.serverHandshakeCryptoKey, nonce, ciphertext, additionalData)
 	}
 	async encryptTls13(data) {
 		const plaintext = concatBytes(data, [CONTENT_TYPE_APPLICATION_DATA]),
 			nonce = xorSequenceIntoIv(this.clientAppIv, this.clientSeqNum++),
 			additionalData = tlsBytes(CONTENT_TYPE_APPLICATION_DATA, 3, 3, uint16be(plaintext.length + 16));
-		return this.cipherConfig.chacha ? chacha20Poly1305Encrypt(this.clientAppKey, nonce, plaintext, additionalData) : aesGcmEncrypt(this.clientAppKey, nonce, plaintext, additionalData)
+		if (this.cipherConfig.chacha) return chacha20Poly1305Encrypt(this.clientAppKey, nonce, plaintext, additionalData);
+		if (!this.clientAppCryptoKey) this.clientAppCryptoKey = await importAesGcmKey(this.clientAppKey, ["encrypt"]);
+		return aesGcmEncryptWithKey(this.clientAppCryptoKey, nonce, plaintext, additionalData)
 	}
 	async decryptTls13(ciphertext) {
 		const nonce = xorSequenceIntoIv(this.serverAppIv, this.serverSeqNum++),
 			additionalData = tlsBytes(CONTENT_TYPE_APPLICATION_DATA, 3, 3, uint16be(ciphertext.length)),
-			plaintext = this.cipherConfig.chacha ? await chacha20Poly1305Decrypt(this.serverAppKey, nonce, ciphertext, additionalData) : await aesGcmDecrypt(this.serverAppKey, nonce, ciphertext, additionalData);
+			plaintext = this.cipherConfig.chacha ? await chacha20Poly1305Decrypt(this.serverAppKey, nonce, ciphertext, additionalData) : await aesGcmDecryptWithKey(this.serverAppCryptoKey || (this.serverAppCryptoKey = await importAesGcmKey(this.serverAppKey, ["decrypt"])), nonce, ciphertext, additionalData);
 		return {
-			data: plaintext.slice(0, -1),
+			data: plaintext.subarray(0, plaintext.length - 1),
 			type: plaintext[plaintext.length - 1]
 		}
 	}
 	async write(data) {
 		if (!this.handshakeComplete) throw new Error("Handshake not complete");
+		const plaintext = 数据转Uint8Array(data);
+		if (!plaintext.byteLength) return;
 		const writer = this.socket.writable.getWriter();
 		try {
-			this.isTls13 ? await writer.write(buildTlsRecord(CONTENT_TYPE_APPLICATION_DATA, await this.encryptTls13(data))) : await writer.write(buildTlsRecord(CONTENT_TYPE_APPLICATION_DATA, await this.encryptTls12(data, CONTENT_TYPE_APPLICATION_DATA)))
+			const records = [];
+			for (let offset = 0; offset < plaintext.byteLength; offset += TLS_MAX_PLAINTEXT_FRAGMENT) {
+				const chunk = plaintext.subarray(offset, Math.min(offset + TLS_MAX_PLAINTEXT_FRAGMENT, plaintext.byteLength));
+				const encrypted = this.isTls13 ? await this.encryptTls13(chunk) : await this.encryptTls12(chunk, CONTENT_TYPE_APPLICATION_DATA);
+				records.push(buildTlsRecord(CONTENT_TYPE_APPLICATION_DATA, encrypted));
+			}
+			await writer.write(records.length === 1 ? records[0] : concatBytes(...records))
 		} finally {
 			writer.releaseLock()
 		}
@@ -2648,7 +2728,7 @@ function wrapTlsSocket(tlsSocket, bufferedData = null) {
 	});
 	const writable = new WritableStream({
 		async write(chunk) {
-			await tlsSocket.write(SS数据转Uint8Array(chunk));
+			await tlsSocket.write(数据转Uint8Array(chunk));
 		},
 		close,
 		abort(error) {
@@ -3906,6 +3986,7 @@ async function 反代参数获取(url) {
 
 	const 设置反代IP = (值) => {
 		反代IP = 值;
+		启用SOCKS5反代 = null;
 		启用反代兜底 = false;
 	};
 
