@@ -465,7 +465,7 @@ async function 处理XHTTP请求(request, yourUUID) {
 		try { reader.releaseLock() } catch (e) { }
 		return new Response('Forbidden', { status: 403 });
 	}
-	if (首包.isUDP && 首包.port !== 53) {
+	if (首包.isUDP && 首包.协议 !== 'trojan' && 首包.port !== 53) {
 		try { reader.releaseLock() } catch (e) { }
 		return new Response('UDP is not supported', { status: 400 });
 	}
@@ -502,6 +502,7 @@ async function 处理XHTTP请求(request, yourUUID) {
 		async start(controller) {
 			let 已关闭 = false;
 			let udpRespHeader = 首包.respHeader;
+			const 木马UDP上下文 = { 缓存: new Uint8Array(0) };
 			const xhttpBridge = {
 				readyState: WebSocket.OPEN,
 				send(data) {
@@ -547,7 +548,8 @@ async function 处理XHTTP请求(request, yourUUID) {
 			try {
 				if (首包.isUDP) {
 					if (首包.rawData?.byteLength) {
-						await forwardataudp(首包.rawData, xhttpBridge, udpRespHeader);
+						if (首包.协议 === 'trojan') await 转发木马UDP数据(首包.rawData, xhttpBridge, 木马UDP上下文);
+						else await forwardataudp(首包.rawData, xhttpBridge, udpRespHeader);
 						udpRespHeader = null;
 					}
 				} else {
@@ -559,7 +561,8 @@ async function 处理XHTTP请求(request, yourUUID) {
 					if (done) break;
 					if (!value || value.byteLength === 0) continue;
 					if (首包.isUDP) {
-						await forwardataudp(value, xhttpBridge, udpRespHeader);
+						if (首包.协议 === 'trojan') await 转发木马UDP数据(value, xhttpBridge, 木马UDP上下文);
+						else await forwardataudp(value, xhttpBridge, udpRespHeader);
 						udpRespHeader = null;
 					} else {
 						if (!(await 写入远端(value))) throw new Error('Remote socket is not ready');
@@ -668,7 +671,8 @@ async function 读取XHTTP首包(reader, token) {
 		const socksStart = 58;
 		if (length < socksStart + 2) return { 状态: 'need_more' };
 		const cmd = data[socksStart];
-		if (cmd !== 1) return { 状态: 'invalid' };
+		if (cmd !== 1 && cmd !== 3) return { 状态: 'invalid' };
+		const isUDP = cmd === 3;
 
 		const atype = data[socksStart + 1];
 		let cursor = socksStart + 2;
@@ -708,7 +712,7 @@ async function 读取XHTTP首包(reader, token) {
 				协议: 'trojan',
 				hostname,
 				port,
-				isUDP: false,
+				isUDP,
 				rawData: data.subarray(dataOffset),
 				respHeader: null,
 			}
@@ -758,6 +762,7 @@ async function 处理gRPC请求(request, yourUUID) {
 	const reader = request.body.getReader();
 	const remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
 	let isDnsQuery = false;
+	const 木马UDP上下文 = { 缓存: new Uint8Array(0) };
 	let 判断是否是木马 = null;
 	let 当前写入Socket = null;
 	let 远端写入器 = null;
@@ -918,7 +923,8 @@ async function 处理gRPC请求(request, yourUUID) {
 						}
 						if (!payload.byteLength) continue;
 						if (isDnsQuery) {
-							await forwardataudp(payload, grpcBridge, null);
+							if (判断是否是木马) await 转发木马UDP数据(payload, grpcBridge, 木马UDP上下文);
+							else await forwardataudp(payload, grpcBridge, null);
 							continue;
 						}
 						if (remoteConnWrapper.socket) {
@@ -933,15 +939,21 @@ async function 处理gRPC请求(request, yourUUID) {
 							if (判断是否是木马) {
 								const 解析结果 = 解析木马请求(首包buffer, yourUUID);
 								if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid trojan request');
-								const { port, hostname, rawClientData } = 解析结果;
-								//log(`[gRPC] 木马首包: ${hostname}:${port}`);
+								const { port, hostname, rawClientData, isUDP } = 解析结果;
+								log(`[gRPC] 木马首包: ${hostname}:${port} | UDP: ${isUDP ? '是' : '否'}`);
 								if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
-								await forwardataTCP(hostname, port, rawClientData, grpcBridge, null, remoteConnWrapper, yourUUID);
+								if (isUDP) {
+									isDnsQuery = true;
+									if (有效数据长度(rawClientData) > 0) await 转发木马UDP数据(rawClientData, grpcBridge, 木马UDP上下文);
+								} else {
+									await forwardataTCP(hostname, port, rawClientData, grpcBridge, null, remoteConnWrapper, yourUUID);
+								}
 							} else {
+								判断是否是木马 = false;
 								const 解析结果 = 解析魏烈思请求(首包buffer, yourUUID);
 								if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
 								const { port, hostname, rawIndex, version, isUDP } = 解析结果;
-								//log(`[gRPC] 魏烈思首包: ${hostname}:${port} | UDP: ${isUDP ? '是' : '否'}`);
+								log(`[gRPC] 魏烈思首包: ${hostname}:${port} | UDP: ${isUDP ? '是' : '否'}`);
 								if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 								if (isUDP) {
 									if (port !== 53) throw new Error('UDP is not supported');
@@ -950,7 +962,10 @@ async function 处理gRPC请求(request, yourUUID) {
 								const respHeader = new Uint8Array([version[0], 0]);
 								grpcBridge.send(respHeader);
 								const rawData = 首包buffer.slice(rawIndex);
-								if (isDnsQuery) await forwardataudp(rawData, grpcBridge, null);
+								if (isDnsQuery) {
+									if (判断是否是木马) await 转发木马UDP数据(rawData, grpcBridge, 木马UDP上下文);
+									else await forwardataudp(rawData, grpcBridge, null);
+								}
 								else await forwardataTCP(hostname, port, rawData, grpcBridge, null, remoteConnWrapper, yourUUID);
 							}
 						}
@@ -979,6 +994,8 @@ async function 处理WS请求(request, yourUUID, url) {
 	serverSock.binaryType = 'arraybuffer';
 	let remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
 	let isDnsQuery = false;
+	let 判断是否是木马 = null;
+	const 木马UDP上下文 = { 缓存: new Uint8Array(0) };
 	const earlyDataHeader = request.headers.get('sec-websocket-protocol') || '';
 	const SS模式禁用EarlyData = !!url.searchParams.get('enc');
 	let 已取消读取 = false;
@@ -1319,7 +1336,10 @@ async function 处理WS请求(request, yourUUID, url) {
 
 	readable.pipeTo(new WritableStream({
 		async write(chunk) {
-			if (isDnsQuery) return await forwardataudp(chunk, serverSock, null);
+			if (isDnsQuery) {
+				if (判断是否是木马) return await 转发木马UDP数据(chunk, serverSock, 木马UDP上下文);
+				return await forwardataudp(chunk, serverSock, null);
+			}
 			if (判断协议类型 === 'ss') {
 				await 处理SS数据(chunk);
 				return;
@@ -1332,6 +1352,7 @@ async function 处理WS请求(request, yourUUID, url) {
 					const bytes = new Uint8Array(chunk);
 					判断协议类型 = bytes.byteLength >= 58 && bytes[56] === 0x0d && bytes[57] === 0x0a ? '木马' : '魏烈思';
 				}
+				判断是否是木马 = 判断协议类型 === '木马';
 				log(`[WS转发] 协议类型: ${判断协议类型} | 来自: ${url.host} | UA: ${request.headers.get('user-agent') || '未知'}`);
 			}
 
@@ -1343,10 +1364,16 @@ async function 处理WS请求(request, yourUUID, url) {
 			if (判断协议类型 === '木马') {
 				const 解析结果 = 解析木马请求(chunk, yourUUID);
 				if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid trojan request');
-				const { port, hostname, rawClientData } = 解析结果;
+				const { port, hostname, rawClientData, isUDP } = 解析结果;
 				if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
+				if (isUDP) {
+					isDnsQuery = true;
+					if (有效数据长度(rawClientData) > 0) return 转发木马UDP数据(rawClientData, serverSock, 木马UDP上下文);
+					return;
+				}
 				await forwardataTCP(hostname, port, rawClientData, serverSock, null, remoteConnWrapper, yourUUID);
 			} else {
+				判断是否是木马 = false;
 				const 解析结果 = 解析魏烈思请求(chunk, yourUUID);
 				if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
 				const { port, hostname, rawIndex, version, isUDP } = 解析结果;
@@ -1357,7 +1384,10 @@ async function 处理WS请求(request, yourUUID, url) {
 				}
 				const respHeader = new Uint8Array([version[0], 0]);
 				const rawData = chunk.slice(rawIndex);
-				if (isDnsQuery) return forwardataudp(rawData, serverSock, respHeader);
+				if (isDnsQuery) {
+					if (判断是否是木马) return 转发木马UDP数据(rawData, serverSock, 木马UDP上下文);
+					return forwardataudp(rawData, serverSock, respHeader);
+				}
 				await forwardataTCP(hostname, port, rawData, serverSock, respHeader, remoteConnWrapper, yourUUID);
 			}
 		},
@@ -1394,7 +1424,8 @@ function 解析木马请求(buffer, passwordPlainText) {
 
 	const view = new DataView(socks5DataBuffer);
 	const cmd = view.getUint8(0);
-	if (cmd !== 1) return { hasError: true, message: "unsupported command, only TCP is allowed" };
+	if (cmd !== 1 && cmd !== 3) return { hasError: true, message: "unsupported command, only TCP/UDP is allowed" };
+	const isUDP = cmd === 3;
 
 	const atype = view.getUint8(1);
 	let addressLength = 0;
@@ -1436,6 +1467,7 @@ function 解析木马请求(buffer, passwordPlainText) {
 		addressType: atype,
 		port: portRemote,
 		hostname: address,
+		isUDP,
 		rawClientData: socks5DataBuffer.slice(portIndex + 4)
 	};
 }
@@ -1500,6 +1532,130 @@ function 拼接字节数据(...chunkList) {
 	let offset = 0;
 	for (const c of chunks) { result.set(c, offset); offset += c.byteLength }
 	return result;
+}
+
+function 解析木马UDP数据报流(chunk, 上下文 = null) {
+	const 当前块 = 数据转Uint8Array(chunk);
+	const 缓存块 = 上下文?.缓存 instanceof Uint8Array ? 上下文.缓存 : new Uint8Array(0);
+	const input = 缓存块.byteLength ? 拼接字节数据(缓存块, 当前块) : 当前块;
+	const 数据报 = [];
+	let cursor = 0;
+	while (cursor < input.byteLength) {
+		const atype = input[cursor];
+		let addrCursor = cursor + 1;
+		let hostname = '';
+
+		if (atype === 1) {
+			if (input.byteLength < addrCursor + 4) break;
+			hostname = `${input[addrCursor]}.${input[addrCursor + 1]}.${input[addrCursor + 2]}.${input[addrCursor + 3]}`;
+			addrCursor += 4;
+		} else if (atype === 3) {
+			if (input.byteLength < addrCursor + 1) break;
+			const domainLength = input[addrCursor];
+			if (input.byteLength < addrCursor + 1 + domainLength) break;
+			hostname = new TextDecoder().decode(input.slice(addrCursor + 1, addrCursor + 1 + domainLength));
+			addrCursor += 1 + domainLength;
+		} else if (atype === 4) {
+			if (input.byteLength < addrCursor + 16) break;
+			const ipv6 = [];
+			const ipv6View = new DataView(input.buffer, input.byteOffset + addrCursor, 16);
+			for (let i = 0; i < 8; i++) ipv6.push(ipv6View.getUint16(i * 2).toString(16));
+			hostname = ipv6.join(':');
+			addrCursor += 16;
+		} else {
+			throw new Error(`invalid trojan udp addressType: ${atype}`);
+		}
+
+		if (!hostname) throw new Error(`invalid trojan udp addressType: ${atype}`);
+		if (input.byteLength < addrCursor + 6) break;
+
+		const port = (input[addrCursor] << 8) | input[addrCursor + 1];
+		const payloadLength = (input[addrCursor + 2] << 8) | input[addrCursor + 3];
+		if (input[addrCursor + 4] !== 0x0d || input[addrCursor + 5] !== 0x0a) throw new Error('invalid trojan udp delimiter');
+		const payloadStart = addrCursor + 6;
+		const payloadEnd = payloadStart + payloadLength;
+		if (input.byteLength < payloadEnd) break;
+
+		数据报.push({
+			addressType: atype,
+			hostname,
+			port,
+			地址端口头: input.slice(cursor, addrCursor + 2),
+			payload: input.slice(payloadStart, payloadEnd)
+		});
+		cursor = payloadEnd;
+	}
+
+	const 剩余 = input.slice(cursor);
+	if (上下文) 上下文.缓存 = 剩余;
+	return { 数据报, 剩余 };
+}
+
+function 封装木马UDP数据报(地址端口头, payload) {
+	const headerBytes = 数据转Uint8Array(地址端口头);
+	const payloadBytes = 数据转Uint8Array(payload);
+	const frame = new Uint8Array(headerBytes.byteLength + 4 + payloadBytes.byteLength);
+	frame.set(headerBytes, 0);
+	frame[headerBytes.byteLength] = (payloadBytes.byteLength >>> 8) & 0xff;
+	frame[headerBytes.byteLength + 1] = payloadBytes.byteLength & 0xff;
+	frame[headerBytes.byteLength + 2] = 0x0d;
+	frame[headerBytes.byteLength + 3] = 0x0a;
+	frame.set(payloadBytes, headerBytes.byteLength + 4);
+	return frame;
+}
+
+function 封装DNS为TCP(payload) {
+	const dnsPayload = 数据转Uint8Array(payload);
+	const frame = new Uint8Array(2 + dnsPayload.byteLength);
+	frame[0] = (dnsPayload.byteLength >>> 8) & 0xff;
+	frame[1] = dnsPayload.byteLength & 0xff;
+	frame.set(dnsPayload, 2);
+	return frame;
+}
+
+function 规范DNS查询为TCP(payload) {
+	const dnsPayload = 数据转Uint8Array(payload);
+	if (dnsPayload.byteLength >= 2) {
+		const declared = (dnsPayload[0] << 8) | dnsPayload[1];
+		if (declared === dnsPayload.byteLength - 2) return dnsPayload;
+	}
+	return 封装DNS为TCP(dnsPayload);
+}
+
+function 解析TCPDNS响应流(chunk, 上下文 = null) {
+	const 当前块 = 数据转Uint8Array(chunk);
+	const 缓存块 = 上下文?.缓存 instanceof Uint8Array ? 上下文.缓存 : new Uint8Array(0);
+	const input = 缓存块.byteLength ? 拼接字节数据(缓存块, 当前块) : 当前块;
+	const 消息列表 = [];
+	let cursor = 0;
+	while (cursor + 2 <= input.byteLength) {
+		const payloadLength = (input[cursor] << 8) | input[cursor + 1];
+		const payloadStart = cursor + 2;
+		const payloadEnd = payloadStart + payloadLength;
+		if (payloadEnd > input.byteLength) break;
+		消息列表.push(input.slice(payloadStart, payloadEnd));
+		cursor = payloadEnd;
+	}
+	const 剩余 = input.slice(cursor);
+	if (上下文) 上下文.缓存 = 剩余;
+	return { 消息列表, 剩余 };
+}
+
+async function 转发木马UDP数据(chunk, webSocket, 上下文) {
+	const { 数据报 } = 解析木马UDP数据报流(chunk, 上下文);
+	for (const packet of 数据报) {
+		if (packet.port !== 53) throw new Error('UDP is not supported');
+		if (!packet.payload.byteLength) continue;
+		const dns响应上下文 = { 缓存: new Uint8Array(0) };
+		const tcpDNS查询 = 规范DNS查询为TCP(packet.payload);
+		//log(`[木马UDP] DNS 数据报 ${packet.hostname}:${packet.port} payload=${packet.payload.byteLength}B tcp=${tcpDNS查询.byteLength}B`);
+		await forwardataudp(tcpDNS查询, webSocket, null, (dnsRespChunk) => {
+			const { 消息列表 } = 解析TCPDNS响应流(dnsRespChunk, dns响应上下文);
+			if (!消息列表.length) return new Uint8Array(0);
+			//log(`[木马UDP] DNS 响应拆包: ${消息列表.length}条`);
+			return 消息列表.map((dnsResp) => 封装木马UDP数据报(packet.地址端口头, dnsResp));
+		});
+	}
 }
 
 function SS递增Nonce计数器(counter) {
@@ -1678,28 +1834,37 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 	}
 }
 
-async function forwardataudp(udpChunk, webSocket, respHeader) {
-	const 请求字节数 = udpChunk?.byteLength ?? udpChunk?.length ?? 0;
-	log(`[UDP-DNS] 收到 DNS 请求: ${请求字节数}B -> 8.8.4.4:53`);
+async function forwardataudp(udpChunk, webSocket, respHeader, 响应封装器 = null) {
+	const 请求数据 = 数据转Uint8Array(udpChunk);
+	const 请求字节数 = 请求数据.byteLength;
+	log(`[UDP转发] 收到 DNS 请求: ${请求字节数}B -> 8.8.4.4:53`);
 	try {
 		const tcpSocket = connect({ hostname: '8.8.4.4', port: 53 });
 		let vlessHeader = respHeader;
 		const writer = tcpSocket.writable.getWriter();
-		await writer.write(udpChunk);
-		log(`[UDP-DNS] DNS 请求已写入上游: ${请求字节数}B`);
+		await writer.write(请求数据);
+		log(`[UDP转发] DNS 请求已写入上游: ${请求字节数}B`);
 		writer.releaseLock();
 		await tcpSocket.readable.pipeTo(new WritableStream({
 			async write(chunk) {
-				log(`[UDP-DNS] 收到 DNS 响应: ${chunk.byteLength}B`);
+				const 原始响应 = 数据转Uint8Array(chunk);
+				log(`[UDP转发] 收到 DNS 响应: ${原始响应.byteLength}B`);
+				const 封装结果 = 响应封装器 ? await 响应封装器(原始响应) : 原始响应;
+				const 发送片段列表 = Array.isArray(封装结果) ? 封装结果 : [封装结果];
+				if (!发送片段列表.length) return;
 				if (webSocket.readyState === WebSocket.OPEN) {
-					if (vlessHeader) {
-						const response = new Uint8Array(vlessHeader.length + chunk.byteLength);
-						response.set(vlessHeader, 0);
-						response.set(chunk, vlessHeader.length);
-						await WebSocket发送并等待(webSocket, response.buffer);
-						vlessHeader = null;
-					} else {
-						await WebSocket发送并等待(webSocket, chunk);
+					for (const fragment of 发送片段列表) {
+						const 转发响应 = 数据转Uint8Array(fragment);
+						if (!转发响应.byteLength) continue;
+						if (vlessHeader) {
+							const response = new Uint8Array(vlessHeader.length + 转发响应.byteLength);
+							response.set(vlessHeader, 0);
+							response.set(转发响应, vlessHeader.length);
+							await WebSocket发送并等待(webSocket, response.buffer);
+							vlessHeader = null;
+						} else {
+							await WebSocket发送并等待(webSocket, 转发响应);
+						}
 					}
 				}
 			},
