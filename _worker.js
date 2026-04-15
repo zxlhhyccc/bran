@@ -1,4 +1,4 @@
-﻿const Version = '2026-04-13 17:46:51';
+﻿const Version = '2026-04-16 04:47:24';
 /*In our project workflow, we first*/ import //the necessary modules, 
 /*then*/ { connect }//to the central server, 
 /*and all data flows*/ from//this single source.
@@ -600,10 +600,8 @@ function 有效数据长度(data) {
 
 async function 读取XHTTP首包(reader, token) {
 	const decoder = new TextDecoder();
-	const 密码哈希 = sha224(token);
-	const 密码哈希字节 = new TextEncoder().encode(密码哈希);
 
-	const 尝试解析VLESS首包 = (data) => {
+	const 尝试解析魏烈思首包 = (data) => {
 		const length = data.byteLength;
 		if (length < 18) return { 状态: 'need_more' };
 		if (formatIdentifier(data.subarray(1, 17)) !== token) return { 状态: 'invalid' };
@@ -661,6 +659,8 @@ async function 读取XHTTP首包(reader, token) {
 	};
 
 	const 尝试解析木马首包 = (data) => {
+		const 密码哈希 = sha224(token);
+		const 密码哈希字节 = new TextEncoder().encode(密码哈希);
 		const length = data.byteLength;
 		if (length < 58) return { 状态: 'need_more' };
 		if (data[56] !== 0x0d || data[57] !== 0x0a) return { 状态: 'invalid' };
@@ -743,17 +743,17 @@ async function 读取XHTTP首包(reader, token) {
 		const 木马结果 = 尝试解析木马首包(当前数据);
 		if (木马结果.状态 === 'ok') return { ...木马结果.结果, reader };
 
-		const vless结果 = 尝试解析VLESS首包(当前数据);
-		if (vless结果.状态 === 'ok') return { ...vless结果.结果, reader };
+		const 魏烈思结果 = 尝试解析魏烈思首包(当前数据);
+		if (魏烈思结果.状态 === 'ok') return { ...魏烈思结果.结果, reader };
 
-		if (木马结果.状态 === 'invalid' && vless结果.状态 === 'invalid') return null;
+		if (木马结果.状态 === 'invalid' && 魏烈思结果.状态 === 'invalid') return null;
 	}
 
 	const 最终数据 = buffer.subarray(0, offset);
 	const 最终木马结果 = 尝试解析木马首包(最终数据);
 	if (最终木马结果.状态 === 'ok') return { ...最终木马结果.结果, reader };
-	const 最终VLESS结果 = 尝试解析VLESS首包(最终数据);
-	if (最终VLESS结果.状态 === 'ok') return { ...最终VLESS结果.结果, reader };
+	const 最终魏烈思结果 = 尝试解析魏烈思首包(最终数据);
+	if (最终魏烈思结果.状态 === 'ok') return { ...最终魏烈思结果.结果, reader };
 	return null;
 }
 ///////////////////////////////////////////////////////////////////////gRPC传输数据///////////////////////////////////////////////
@@ -951,7 +951,7 @@ async function 处理gRPC请求(request, yourUUID) {
 							} else {
 								判断是否是木马 = false;
 								const 解析结果 = 解析魏烈思请求(首包buffer, yourUUID);
-								if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
+								if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid 魏烈思 request');
 								const { port, hostname, rawIndex, version, isUDP } = 解析结果;
 								log(`[gRPC] 魏烈思首包: ${hostname}:${port} | UDP: ${isUDP ? '是' : '否'}`);
 								if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
@@ -1375,7 +1375,7 @@ async function 处理WS请求(request, yourUUID, url) {
 			} else {
 				判断是否是木马 = false;
 				const 解析结果 = 解析魏烈思请求(chunk, yourUUID);
-				if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid vless request');
+				if (解析结果?.hasError) throw new Error(解析结果.message || 'Invalid 魏烈思 request');
 				const { port, hostname, rawIndex, version, isUDP } = 解析结果;
 				if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 				if (isUDP) {
@@ -1790,7 +1790,7 @@ async function forwardataudp(udpChunk, webSocket, respHeader, 响应封装器 = 
 	log(`[UDP转发] 收到 DNS 请求: ${请求字节数}B -> 8.8.4.4:53`);
 	try {
 		const tcpSocket = connect({ hostname: '8.8.4.4', port: 53 });
-		let vlessHeader = respHeader;
+		let 魏烈思Header = respHeader;
 		const writer = tcpSocket.writable.getWriter();
 		await writer.write(请求数据);
 		log(`[UDP转发] DNS 请求已写入上游: ${请求字节数}B`);
@@ -1806,12 +1806,12 @@ async function forwardataudp(udpChunk, webSocket, respHeader, 响应封装器 = 
 					for (const fragment of 发送片段列表) {
 						const 转发响应 = 数据转Uint8Array(fragment);
 						if (!转发响应.byteLength) continue;
-						if (vlessHeader) {
-							const response = new Uint8Array(vlessHeader.length + 转发响应.byteLength);
-							response.set(vlessHeader, 0);
-							response.set(转发响应, vlessHeader.length);
+						if (魏烈思Header) {
+							const response = new Uint8Array(魏烈思Header.length + 转发响应.byteLength);
+							response.set(魏烈思Header, 0);
+							response.set(转发响应, 魏烈思Header.length);
 							await WebSocket发送并等待(webSocket, response.buffer);
-							vlessHeader = null;
+							魏烈思Header = null;
 						} else {
 							await WebSocket发送并等待(webSocket, 转发响应);
 						}
