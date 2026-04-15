@@ -1679,14 +1679,18 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 }
 
 async function forwardataudp(udpChunk, webSocket, respHeader) {
+	const 请求字节数 = udpChunk?.byteLength ?? udpChunk?.length ?? 0;
+	log(`[UDP-DNS] 收到 DNS 请求: ${请求字节数}B -> 8.8.4.4:53`);
 	try {
 		const tcpSocket = connect({ hostname: '8.8.4.4', port: 53 });
 		let vlessHeader = respHeader;
 		const writer = tcpSocket.writable.getWriter();
 		await writer.write(udpChunk);
+		log(`[UDP-DNS] DNS 请求已写入上游: ${请求字节数}B`);
 		writer.releaseLock();
 		await tcpSocket.readable.pipeTo(new WritableStream({
 			async write(chunk) {
+				log(`[UDP-DNS] 收到 DNS 响应: ${chunk.byteLength}B`);
 				if (webSocket.readyState === WebSocket.OPEN) {
 					if (vlessHeader) {
 						const response = new Uint8Array(vlessHeader.length + chunk.byteLength);
@@ -1701,7 +1705,7 @@ async function forwardataudp(udpChunk, webSocket, respHeader) {
 			},
 		}));
 	} catch (error) {
-		// console.error('UDP forward error:', error);
+		log(`[UDP转发] DNS 转发失败: ${error?.message || error}`);
 	}
 }
 
