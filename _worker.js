@@ -3436,7 +3436,7 @@ async function DoH查询(域名, 记录类型, DoH解析服务 = "https://cloudf
 		const qname = 编码域名(域名);
 		const query = new Uint8Array(12 + qname.length + 4);
 		const qview = new DataView(query.buffer);
-		qview.setUint16(0, 0);       // ID
+		qview.setUint16(0, crypto.getRandomValues(new Uint16Array(1))[0]); // ID (random per RFC 1035)
 		qview.setUint16(2, 0x0100);  // Flags: RD=1 (递归查询)
 		qview.setUint16(4, 1);       // QDCOUNT
 		query.set(qname, 12);
