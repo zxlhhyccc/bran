@@ -1,4 +1,4 @@
-﻿const Version = '2026-04-17 01:57:56';
+﻿const Version = '2026-04-22 16:30:32';
 /*In our project workflow, we first*/ import //the necessary modules, 
 /*then*/ { connect }//to the central server, 
 /*and all data flows*/ from//this single source.
@@ -3039,7 +3039,7 @@ function Clash订阅配置文件热补丁(Clash_原始订阅内容, config_JSON 
 	if (ECH_SNI && !HOSTS.includes(ECH_SNI)) HOSTS.push(ECH_SNI);
 
 	if (ECH启用 && HOSTS.length > 0) {
-		const hostsEntries = HOSTS.map(host => `    "${host}":${ECH_DNS ? `\n      - ${ECH_DNS}` : ''}\n      - https://doh.cm.edu.kg/CMLiussss`).join('\n');
+		const hostsEntries = HOSTS.map(host => `    "${host}": ${ECH_DNS ? ECH_DNS : ''}`).join('\n');
 		clash_yaml = 插入NameserverPolicy(clash_yaml, hostsEntries);
 	}
 
