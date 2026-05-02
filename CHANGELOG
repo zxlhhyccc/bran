@@ -33,7 +33,7 @@
 
 ### New
 
-- 新增 Shadwsocks 协议 **AEAD 加密传输**，为非 TLS 传输模式提供内容加密。
+- 新增 Shadowsocks 协议 **AEAD 加密传输**，为非 TLS 传输模式提供内容加密。
 
 ## [2.1.0]
 
