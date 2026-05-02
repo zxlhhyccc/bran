@@ -1,4 +1,4 @@
-﻿const Version = '2026-04-22 16:30:32';
+﻿const Version = '2026-05-03 01:19:25';
 /*In our project workflow, we first*/ import //the necessary modules, 
 /*then*/ { connect }//to the central server, 
 /*and all data flows*/ from//this single source.
@@ -336,7 +336,12 @@ export default {
 												其他节点.push(地址备注分离[0] + '#' + encodeURIComponent(decodeURIComponent(地址备注分离[1])));
 											} else 其他节点.push(元素);
 										} else {
-											优选IP.push(元素);
+											const 备注位置 = 元素.indexOf('#');
+											const 地址部分 = 备注位置 > -1 ? 元素.slice(0, 备注位置) : 元素;
+											if (地址部分.includes('*')) {
+												const 备注部分 = 备注位置 > -1 ? 元素.slice(备注位置) : '';
+												优选IP.push(替换星号为随机字符(地址部分) + 备注部分);
+											} else 优选IP.push(元素);
 										}
 									}
 								}
@@ -3261,20 +3266,25 @@ function 随机路径(完整节点路径 = "/") {
 
 function 批量替换域名(内容, hosts, 每组数量 = 2) {
 	const 打乱后HOSTS = [...hosts].sort(() => Math.random() - 0.5);
-	const 字符集 = 'abcdefghijklmnopqrstuvwxyz0123456789';
 	let count = 0;
 	let currentRandomHost = null;
 	return 内容.replace(/example\.com/g, () => {
 		if (count % 每组数量 === 0) {
 			const 原始host = 打乱后HOSTS[Math.floor(count / 每组数量) % 打乱后HOSTS.length];
-			currentRandomHost = 原始host?.includes('*') ? 原始host.replace(/\*/g, () => {
-				let s = '';
-				for (let i = 0; i < Math.floor(Math.random() * 14) + 3; i++) s += 字符集[Math.floor(Math.random() * 36)];
-				return s;
-			}) : 原始host;
+			currentRandomHost = 替换星号为随机字符(原始host);
 		}
 		count++;
 		return currentRandomHost;
+	});
+}
+
+function 替换星号为随机字符(内容) {
+	if (typeof 内容 !== 'string' || !内容.includes('*')) return 内容;
+	const 字符集 = 'abcdefghijklmnopqrstuvwxyz0123456789';
+	return 内容.replace(/\*/g, () => {
+		let s = '';
+		for (let i = 0; i < Math.floor(Math.random() * 14) + 3; i++) s += 字符集[Math.floor(Math.random() * 字符集.length)];
+		return s;
 	});
 }
 
